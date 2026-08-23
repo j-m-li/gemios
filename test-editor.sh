@@ -1,5 +1,5 @@
 #!/bin/bash
-# GEMOS RTOS - MS-DOS Edit & UTF-8 Automated Test Suite
+# GEMIOS RTOS - MS-DOS Edit & UTF-8 Automated Test Suite
 # Public Domain Dedication
 
 set -e
@@ -8,7 +8,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
 echo "=========================================================="
-echo " Starting GEMOS MS-DOS Edit & UTF-8 Text Editor Test"
+echo " Starting GEMIOS MS-DOS Edit & UTF-8 Text Editor Test"
 echo "=========================================================="
 
 echo "[1/3] Building kernel and test disk images..."
@@ -74,7 +74,7 @@ send('edit usb0 NEWFILE.TXT\n', 0.5)
 wait_for(b'[EDITOR] Ready', timeout=5.0)
 
 # 3. Type text with UTF-8 characters
-send('GEMOS RTOS UTF-8: ä ö ü é ─ │\n', 0.8)
+send('GEMIOS RTOS UTF-8: ä ö ü é ─ │\n', 0.8)
 send('Second line in MS-DOS Edit!\n', 0.8)
 
 # 4. Save file using Ctrl+S (\x13)
@@ -125,7 +125,7 @@ echo "----------------------------------------------------------"
 
 # Assertions
 grep -q "NEWFILE.TXT" "$TEST_LOG" && echo "[PASS] File NEWFILE.TXT created in FAT directory" || { echo "[FAIL] NEWFILE.TXT not listed in FAT"; exit 1; }
-grep -q "GEMOS RTOS UTF-8: ä ö ü é ─ │" "$TEST_LOG" && echo "[PASS] UTF-8 text saved and read back successfully" || { echo "[FAIL] UTF-8 content mismatch"; exit 1; }
+grep -q "GEMIOS RTOS UTF-8: ä ö ü é ─ │" "$TEST_LOG" && echo "[PASS] UTF-8 text saved and read back successfully" || { echo "[FAIL] UTF-8 content mismatch"; exit 1; }
 grep -q "Second line in MS-DOS Edit!" "$TEST_LOG" && echo "[PASS] Multiline text saved and read back successfully" || { echo "[FAIL] Multiline content mismatch"; exit 1; }
 
 echo ""

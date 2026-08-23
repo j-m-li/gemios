@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_VGA_H
-#define GEMOS_VGA_H
+#ifndef GEMIOS_VGA_H
+#define GEMIOS_VGA_H
 
 #include "types.h"
 
@@ -58,4 +58,4 @@ void serial_puts(const char *str);
 bool serial_has_char(void);
 char serial_getchar(void);
 
-#endif /* GEMOS_VGA_H */
+#endif /* GEMIOS_VGA_H */

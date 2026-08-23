@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_TYPES_H
-#define GEMOS_TYPES_H
+#ifndef GEMIOS_TYPES_H
+#define GEMIOS_TYPES_H
 
 typedef unsigned char      uint8_t;
 typedef unsigned short     uint16_t;
@@ -69,4 +69,4 @@ typedef _Bool bool;
 #define KEY_CTRL_X   ((char)0x18)
 #define KEY_CTRL_Z   ((char)0x1A)
 
-#endif /* GEMOS_TYPES_H */
+#endif /* GEMIOS_TYPES_H */

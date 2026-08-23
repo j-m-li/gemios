@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_USB_CORE_H
-#define GEMOS_USB_CORE_H
+#ifndef GEMIOS_USB_CORE_H
+#define GEMIOS_USB_CORE_H
 
 #include "types.h"
 #include "usb_defs.h"
@@ -66,4 +66,4 @@ int usb_control_msg(usb_device_t *dev, uint8_t req_type, uint8_t request, uint16
 int usb_get_descriptor(usb_device_t *dev, uint8_t desc_type, uint8_t desc_index, void *data, uint16_t len);
 int usb_set_configuration(usb_device_t *dev, uint8_t config_val);
 
-#endif /* GEMOS_USB_CORE_H */
+#endif /* GEMIOS_USB_CORE_H */

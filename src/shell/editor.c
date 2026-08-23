@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "editor.h"
@@ -438,7 +438,7 @@ static void editor_render(void) {
     for (size_t x = 0; x < VGA_WIDTH; x++) {
         vga_putc_at(' ', COLOR_HEADER, x, 0);
     }
-    vga_puts_at(" GEMOS EDIT ", COLOR_HEADER, 1, 0);
+    vga_puts_at(" GEMIOS EDIT ", COLOR_HEADER, 1, 0);
     vga_putc_at(0xB3, COLOR_HEADER, 13, 0); /* │ */
 
     char title[64];

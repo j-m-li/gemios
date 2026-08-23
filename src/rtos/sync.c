@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "sync.h"
@@ -85,24 +85,30 @@ void rtos_sem_signal(rtos_sem_t *sem) {
 /* Mutex Implementation with Priority Inheritance */
 void rtos_mutex_init(rtos_mutex_t *mutex) {
     mutex->locked = false;
+    mutex->recursion_count = 0;
     mutex->owner = NULL;
     mutex->wait_head = NULL;
     mutex->wait_tail = NULL;
 }
 
 bool rtos_mutex_lock(rtos_mutex_t *mutex, uint32_t timeout_ms) {
+    if (!rtos_is_running()) {
+        return true;
+    }
     uint32_t flags = irq_save();
     task_t *cur = rtos_current_task();
 
     if (!mutex->locked) {
         mutex->locked = true;
+        mutex->recursion_count = 1;
         mutex->owner = cur;
         irq_restore(flags);
         return true;
     }
 
-    if (mutex->owner == cur) {
+    if (cur != NULL && mutex->owner == cur) {
         // Recursive lock (allow)
+        mutex->recursion_count++;
         irq_restore(flags);
         return true;
     }
@@ -127,10 +133,19 @@ bool rtos_mutex_lock(rtos_mutex_t *mutex, uint32_t timeout_ms) {
 }
 
 void rtos_mutex_unlock(rtos_mutex_t *mutex) {
+    if (!rtos_is_running()) {
+        return;
+    }
     uint32_t flags = irq_save();
     task_t *cur = rtos_current_task();
 
-    if (!mutex->locked || mutex->owner != cur) {
+    if (!mutex->locked || (cur != NULL && mutex->owner != cur)) {
+        irq_restore(flags);
+        return;
+    }
+
+    if (mutex->recursion_count > 1) {
+        mutex->recursion_count--;
         irq_restore(flags);
         return;
     }
@@ -143,9 +158,11 @@ void rtos_mutex_unlock(rtos_mutex_t *mutex) {
     task_t *waiter = pop_waiter(&mutex->wait_head, &mutex->wait_tail);
     if (waiter) {
         mutex->owner = waiter;
+        mutex->recursion_count = 1;
         rtos_task_unblock(waiter);
     } else {
         mutex->locked = false;
+        mutex->recursion_count = 0;
         mutex->owner = NULL;
     }
 

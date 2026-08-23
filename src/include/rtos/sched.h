@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_RTOS_SCHED_H
-#define GEMOS_RTOS_SCHED_H
+#ifndef GEMIOS_RTOS_SCHED_H
+#define GEMIOS_RTOS_SCHED_H
 
 #include "task.h"
 #include "idt.h"
@@ -21,4 +21,4 @@ void rtos_task_unblock(task_t *task);
 /* Preemptive interrupt context switch handler */
 registers_t *rtos_schedule_from_isr(registers_t *regs);
 
-#endif /* GEMOS_RTOS_SCHED_H */
+#endif /* GEMIOS_RTOS_SCHED_H */

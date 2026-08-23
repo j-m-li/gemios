@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_PIT_H
-#define GEMOS_PIT_H
+#ifndef GEMIOS_PIT_H
+#define GEMIOS_PIT_H
 
 #include "types.h"
 
@@ -15,4 +15,4 @@ uint32_t pit_get_ticks(void);
 uint32_t pit_get_uptime_sec(void);
 uint32_t pit_get_uptime_ms(void);
 
-#endif /* GEMOS_PIT_H */
+#endif /* GEMIOS_PIT_H */

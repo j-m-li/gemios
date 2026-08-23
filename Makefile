@@ -2,9 +2,9 @@ CC = clang
 LD = ld.lld
 QEMU = qemu-system-i386
 
-CFLAGS = -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
+CFLAGS = -g -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
          -fno-stack-protector -fno-builtin -nostdlib -Wall -Wextra \
-         -Wno-unused-parameter -Wno-unused-function -O2 \
+         -Wno-unused-parameter -Wno-unused-function -O0 \
          -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell
 
 ASFLAGS = -m32
@@ -46,8 +46,8 @@ $(DISK_IMG):
 	@mkdir -p $(BUILD_DIR)
 	@echo "[DISK] Creating 32MB FAT16 test disk image..."
 	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=32 status=none
-	mkfs.fat -F 16 -n "GEMOS_FAT16" $(DISK_IMG) > /dev/null
-	@echo "Welcome to GEMOS RTOS on USB Mass Storage (FAT16)!" > $(BUILD_DIR)/README.TXT
+	mkfs.fat -F 16 -n "GEMIOS16" $(DISK_IMG) > /dev/null
+	@echo "Welcome to GEMIOS RTOS on USB Mass Storage (FAT16)!" > $(BUILD_DIR)/README.TXT
 	@echo "Testing USB BOT & SCSI read/write functionality." >> $(BUILD_DIR)/README.TXT
 	@echo "All systems operational!" > $(BUILD_DIR)/STATUS.TXT
 	mcopy -i $(DISK_IMG) $(BUILD_DIR)/README.TXT ::README.TXT
@@ -58,11 +58,11 @@ $(FAT32_IMG):
 	@mkdir -p $(BUILD_DIR)
 	@echo "[DISK] Creating 64MB FAT32 test disk image..."
 	dd if=/dev/zero of=$(FAT32_IMG) bs=1M count=64 status=none
-	mkfs.fat -F 32 -n "GEMOS_FAT32" $(FAT32_IMG) > /dev/null
-	@echo "Welcome to GEMOS RTOS on USB Mass Storage (FAT32)!" > $(BUILD_DIR)/README.TXT
+	mkfs.fat -F 32 -n "GEMIOS32" $(FAT32_IMG) > /dev/null
+	@echo "Welcome to GEMIOS RTOS on USB Mass Storage (FAT32)!" > $(BUILD_DIR)/README.TXT
 	@echo "Testing FAT32 cluster chain reading and root directory traversal." >> $(BUILD_DIR)/README.TXT
 	@echo "FAT32 verification passed!" > $(BUILD_DIR)/STATUS.TXT
-	@echo "GEMOS RTOS FAT32 Document" > $(BUILD_DIR)/FAT32DOC.TXT
+	@echo "GEMIOS RTOS FAT32 Document" > $(BUILD_DIR)/FAT32DOC.TXT
 	@echo "Supports cluster traversal and 32-bit FAT table lookups." >> $(BUILD_DIR)/FAT32DOC.TXT
 	mcopy -i $(FAT32_IMG) $(BUILD_DIR)/README.TXT ::README.TXT
 	mcopy -i $(FAT32_IMG) $(BUILD_DIR)/STATUS.TXT ::STATUS.TXT

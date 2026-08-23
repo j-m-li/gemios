@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "vga.h"
@@ -100,7 +100,7 @@ void vga_draw_status_bar(void) {
     for (size_t x = 0; x < VGA_WIDTH; x++) {
         vga_putc_at(' ', header_color, x, 0);
     }
-    vga_puts_at(" GEMOS x86-32 Preemptive RTOS | USB xHCI / HID / MSC / Hub ", header_color, 2, 0);
+    vga_puts_at(" GEMIOS x86-32 Preemptive RTOS | USB xHCI / HID / MSC / Hub ", header_color, 2, 0);
 
     uint8_t footer_color = vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_DARK_GREY);
     for (size_t x = 0; x < VGA_WIDTH; x++) {

@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "xhci.h"
@@ -12,45 +12,18 @@
 #include "pit.h"
 #include "string.h"
 #include "sched.h"
+#include "sync.h"
 #include "io.h"
 
 static xhci_controller_t g_xhci;
-static volatile int xhci_lock_owner = -1;
-static volatile int xhci_lock_depth = 0;
+static rtos_mutex_t g_xhci_mutex;
 
 static void xhci_lock(void) {
-    if (!rtos_is_running()) {
-        return;
-    }
-    task_t *cur = rtos_current_task();
-    int tid = cur ? (int)cur->id : 0;
-    if (xhci_lock_owner == tid) {
-        xhci_lock_depth++;
-        return;
-    }
-    while (1) {
-        int expected = -1;
-        if (__atomic_compare_exchange_n(&xhci_lock_owner, &expected, tid, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-            xhci_lock_depth = 1;
-            return;
-        }
-        rtos_yield();
-    }
+    rtos_mutex_lock(&g_xhci_mutex, 0xFFFFFFFF);
 }
 
 static void xhci_unlock(void) {
-    if (!rtos_is_running()) {
-        return;
-    }
-    task_t *cur = rtos_current_task();
-    int tid = cur ? (int)cur->id : 0;
-    if (xhci_lock_owner != tid) {
-        return;
-    }
-    xhci_lock_depth--;
-    if (xhci_lock_depth == 0) {
-        __atomic_store_n(&xhci_lock_owner, -1, __ATOMIC_RELEASE);
-    }
+    rtos_mutex_unlock(&g_xhci_mutex);
 }
 
 xhci_controller_t *xhci_get_controller(void) {
@@ -95,6 +68,7 @@ void xhci_ring_doorbell(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t target
 }
 
 bool xhci_init(pci_device_t *pci_dev) {
+    rtos_mutex_init(&g_xhci_mutex);
     memset(&g_xhci, 0, sizeof(xhci_controller_t));
     g_xhci.pci_dev = pci_dev;
 
@@ -204,7 +178,8 @@ bool xhci_init(pci_device_t *pci_dev) {
 
 static xhci_trb_t *xhci_poll_event(xhci_controller_t *ctrl) {
     xhci_trb_t *trb = &ctrl->evt_ring.trbs[ctrl->evt_ring.dequeue_idx];
-    uint8_t cycle = trb->control & TRB_CYCLE;
+    uint32_t control = trb->control;
+    uint8_t cycle = control & TRB_CYCLE;
 
     if (cycle != ctrl->evt_cycle) {
         return NULL;
@@ -236,7 +211,7 @@ static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_tr
     }
 
     cmd_trb->control |= (ring->cycle ? TRB_CYCLE : 0);
-    memcpy(&ring->trbs[idx], cmd_trb, sizeof(xhci_trb_t));
+    memcpy((void*)&ring->trbs[idx], cmd_trb, sizeof(xhci_trb_t));
 
     phys_addr_t cmd_trb_phys = ring->phys_addr + (idx * sizeof(xhci_trb_t));
     ring->enqueue_idx++;
@@ -245,14 +220,15 @@ static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_tr
 
     int result = -100;
     uint32_t start_time = pit_get_ticks();
-    while (pit_get_ticks() - start_time < 1000) {
+    uint32_t loops = 0;
+    while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++loops < 2000000) {
         xhci_trb_t *evt = xhci_poll_event(ctrl);
         if (evt) {
             uint8_t type = TRB_GET_TYPE(evt->control);
             if (type == TRB_TYPE_CMD_COMPLETION_EVENT) {
                 if (evt->parameter == (uint64_t)cmd_trb_phys) {
                     if (out_evt) {
-                        memcpy(out_evt, evt, sizeof(xhci_trb_t));
+                        memcpy(out_evt, (const void*)evt, sizeof(xhci_trb_t));
                     }
                     uint8_t code = TRB_GET_COMP_CODE(evt->status);
                     result = (code == TRB_COMP_SUCCESS) ? 0 : -(int)code;
@@ -353,8 +329,8 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
     }
 
     xhci_trb_t setup_trb;
-    memset(&setup_trb, 0, sizeof(setup_trb));
-    memcpy(&setup_trb.parameter, setup, sizeof(usb_setup_packet_t));
+    memset((void*)&setup_trb, 0, sizeof(setup_trb));
+    memcpy((void*)&setup_trb.parameter, setup, sizeof(usb_setup_packet_t));
     setup_trb.status = 8;
     setup_trb.control = TRB_SET_TYPE(TRB_TYPE_SETUP_STAGE) | TRB_IDT | trt;
     xhci_ring_enqueue_trb(ring, &setup_trb);
@@ -380,7 +356,8 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
 
     int result = -100;
     uint32_t start_time = pit_get_ticks();
-    while (pit_get_ticks() - start_time < 1000) {
+    uint32_t loops = 0;
+    while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++loops < 2000000) {
         xhci_trb_t *evt = xhci_poll_event(ctrl);
         if (evt) {
             uint8_t type = TRB_GET_TYPE(evt->control);
@@ -418,7 +395,8 @@ int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci,
 
     int result = -100;
     uint32_t start_time = pit_get_ticks();
-    while (pit_get_ticks() - start_time < 1000) {
+    uint32_t bulk_loops = 0;
+    while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++bulk_loops < 2000000) {
         xhci_trb_t *evt = xhci_poll_event(ctrl);
         if (evt) {
             uint8_t type = TRB_GET_TYPE(evt->control);

@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "shell.h"
@@ -60,7 +60,7 @@ static const char *history_get(size_t index) {
 static void cmd_help(int argc, char **argv) {
     UNUSED(argc);
     UNUSED(argv);
-    kprintf("\n==================== GEMOS RTOS Commands ====================\n");
+    kprintf("\n==================== GEMIOS RTOS Commands ====================\n");
     kprintf("  help                  - Show this help message\n");
     kprintf("  history               - Show command history list\n");
     kprintf("  !n / !!               - Re-execute command by history number / last\n");
@@ -71,10 +71,12 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  storage               - List USB Mass Storage devices\n");
     kprintf("  readsec <dev> <lba>   - Read and hexdump a block from storage\n");
     kprintf("  writesec <dev> <lba> <s> - Write text into a block on storage\n");
-    kprintf("  fatls [dev]           - List files on FAT filesystem (default: usb0)\n");
-    kprintf("  fatcat [dev] <file>   - Read file content from FAT (default: usb0)\n");
+    kprintf("  cd [dev] [dir]        - Change current directory on FAT filesystem\n");
+    kprintf("  pwd                   - Print current working directory\n");
+    kprintf("  fatls [dev] [dir]     - List directory contents on FAT (default: usb0)\n");
+    kprintf("  fatcat [dev] <path>   - Read file content from FAT (default: usb0)\n");
     kprintf("  fatmkdir [dev] <dir>  - Create a directory in FAT filesystem\n");
-    kprintf("  edit [dev] <file>     - Fullscreen MS-DOS style UTF-8 text editor\n");
+    kprintf("  edit [dev] <path>     - Fullscreen MS-DOS style UTF-8 text editor\n");
     kprintf("  mouse                 - Show current USB mouse coordinates\n");
     kprintf("  bench                 - Run RTOS context-switch benchmark\n");
     kprintf("  uptime                - Show system uptime\n");
@@ -300,8 +302,43 @@ static void cmd_writesec(int argc, char **argv) {
     hexdump(buffer, 64);
 }
 
-static void cmd_fatls(int argc, char **argv) {
-    const char *dev_name = (argc > 1) ? argv[1] : "usb0";
+static char g_shell_cwd[256] = "/";
+static char g_shell_dev[32] = "usb0";
+
+static void shell_build_path(const char *in_path, char *out_path, size_t out_max) {
+    if (!in_path || in_path[0] == '\0') {
+        strncpy(out_path, g_shell_cwd, out_max - 1);
+        out_path[out_max - 1] = '\0';
+        return;
+    }
+    if (in_path[0] == '/' || in_path[0] == '\\') {
+        strncpy(out_path, in_path, out_max - 1);
+        out_path[out_max - 1] = '\0';
+        return;
+    }
+    if (strcmp(g_shell_cwd, "/") == 0) {
+        snprintf(out_path, out_max, "/%s", in_path);
+    } else {
+        snprintf(out_path, out_max, "%s/%s", g_shell_cwd, in_path);
+    }
+}
+
+static void cmd_cd(int argc, char **argv) {
+    const char *dev_name = g_shell_dev;
+    const char *target = "/";
+
+    if (argc == 2) {
+        if (blockdev_get(argv[1]) != NULL) {
+            dev_name = argv[1];
+            target = "/";
+        } else {
+            target = argv[1];
+        }
+    } else if (argc >= 3) {
+        dev_name = argv[1];
+        target = argv[2];
+    }
+
     block_dev_t *bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
@@ -314,14 +351,100 @@ static void cmd_fatls(int argc, char **argv) {
         return;
     }
 
-    int res = fat_list_root(&fs);
+    char full_path[256];
+    shell_build_path(target, full_path, sizeof(full_path));
+
+    if (fat_is_dir(&fs, full_path) != 1) {
+        kprint_color(0x4F, "Directory '%s' not found on '%s'.\n", target, dev_name);
+        return;
+    }
+
+    strncpy(g_shell_dev, dev_name, sizeof(g_shell_dev) - 1);
+    if (strcmp(target, "/") == 0) {
+        strcpy(g_shell_cwd, "/");
+    } else if (target[0] == '/') {
+        strncpy(g_shell_cwd, target, sizeof(g_shell_cwd) - 1);
+    } else if (strcmp(target, "..") == 0) {
+        char *last = strrchr(g_shell_cwd, '/');
+        if (last && last != g_shell_cwd) {
+            *last = '\0';
+        } else {
+            strcpy(g_shell_cwd, "/");
+        }
+    } else if (strcmp(target, ".") == 0) {
+        // No-op
+    } else {
+        strncpy(g_shell_cwd, full_path, sizeof(g_shell_cwd) - 1);
+    }
+    g_shell_cwd[sizeof(g_shell_cwd) - 1] = '\0';
+}
+
+static void cmd_pwd(int argc, char **argv) {
+    UNUSED(argc);
+    UNUSED(argv);
+    kprintf("%s:%s\n", g_shell_dev, g_shell_cwd);
+}
+
+static void cmd_fatls(int argc, char **argv) {
+    const char *dev_name = g_shell_dev;
+    const char *target = g_shell_cwd;
+
+    if (argc == 2) {
+        if (argv[1][0] == '/' || argv[1][0] == '\\') {
+            target = argv[1];
+        } else {
+            // Check if it's a directory on current device first
+            block_dev_t *cur_bdev = blockdev_get(g_shell_dev);
+            bool is_dir = false;
+            if (cur_bdev) {
+                fat_fs_t cur_fs;
+                if (fat_mount(cur_bdev, &cur_fs) == 0) {
+                    char full_path[256];
+                    shell_build_path(argv[1], full_path, sizeof(full_path));
+                    if (fat_is_dir(&cur_fs, full_path) == 1) {
+                        is_dir = true;
+                        target = argv[1];
+                    }
+                }
+            }
+            if (!is_dir) {
+                if (blockdev_get(argv[1]) != NULL) {
+                    dev_name = argv[1];
+                    target = "/";
+                } else {
+                    kprint_color(0x4F, "Block device '%s' not found.\n", argv[1]);
+                    return;
+                }
+            }
+        }
+    } else if (argc >= 3) {
+        dev_name = argv[1];
+        target = argv[2];
+    }
+
+    block_dev_t *bdev = blockdev_get(dev_name);
+    if (!bdev) {
+        kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
+        return;
+    }
+
+    fat_fs_t fs;
+    if (fat_mount(bdev, &fs) != 0) {
+        kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
+        return;
+    }
+
+    char full_path[256];
+    shell_build_path(target, full_path, sizeof(full_path));
+
+    int res = fat_list_dir(&fs, full_path);
     if (res < 0) {
-        kprint_color(0x4F, "Failed to read root directory from '%s'.\n", dev_name);
+        kprint_color(0x4F, "Failed to read directory '%s' from '%s'.\n", target, dev_name);
     }
 }
 
 static void cmd_fatcat(int argc, char **argv) {
-    const char *dev_name = "usb0";
+    const char *dev_name = g_shell_dev;
     const char *filename = NULL;
 
     if (argc == 2) {
@@ -346,6 +469,9 @@ static void cmd_fatcat(int argc, char **argv) {
         return;
     }
 
+    char full_path[256];
+    shell_build_path(filename, full_path, sizeof(full_path));
+
     size_t buf_size = 65536;
     char *buf = (char*)kmalloc(buf_size);
     if (!buf) {
@@ -354,7 +480,7 @@ static void cmd_fatcat(int argc, char **argv) {
     }
 
     size_t out_len = 0;
-    if (fat_read_file(&fs, filename, buf, buf_size - 1, &out_len) == 0) {
+    if (fat_read_file(&fs, full_path, buf, buf_size - 1, &out_len) == 0) {
         kprintf("\n--- %s (%u bytes) ---\n", filename, (uint32_t)out_len);
         size_t i = 0;
         while (i < out_len) {
@@ -401,7 +527,7 @@ static void cmd_fatcat(int argc, char **argv) {
 }
 
 static void cmd_fatmkdir(int argc, char **argv) {
-    const char *dev_name = "usb0";
+    const char *dev_name = g_shell_dev;
     const char *dirname = NULL;
 
     if (argc == 2) {
@@ -426,7 +552,10 @@ static void cmd_fatmkdir(int argc, char **argv) {
         return;
     }
 
-    int res = fat_mkdir(&fs, dirname);
+    char full_path[256];
+    shell_build_path(dirname, full_path, sizeof(full_path));
+
+    int res = fat_mkdir(&fs, full_path);
     if (res == 0) {
         kprint_color(0x0A, "Directory '%s' created successfully on '%s'.\n", dirname, dev_name);
     } else if (res == -2) {
@@ -504,7 +633,7 @@ static void cmd_reboot(int argc, char **argv) {
 }
 
 static void cmd_edit(int argc, char **argv) {
-    const char *dev_name = "usb0";
+    const char *dev_name = g_shell_dev;
     const char *filename = "UNTITLED.TXT";
 
     if (argc == 2) {
@@ -514,7 +643,9 @@ static void cmd_edit(int argc, char **argv) {
         filename = argv[2];
     }
 
-    editor_open(dev_name, filename);
+    char full_path[256];
+    shell_build_path(filename, full_path, sizeof(full_path));
+    editor_open(dev_name, full_path);
 }
 
 void shell_execute_command(char *cmd_line) {
@@ -583,6 +714,8 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "storage") == 0) cmd_storage(argc, argv);
     else if (strcmp(argv[0], "readsec") == 0) cmd_readsec(argc, argv);
     else if (strcmp(argv[0], "writesec") == 0) cmd_writesec(argc, argv);
+    else if (strcmp(argv[0], "cd") == 0) cmd_cd(argc, argv);
+    else if (strcmp(argv[0], "pwd") == 0) cmd_pwd(argc, argv);
     else if (strcmp(argv[0], "fatls") == 0) cmd_fatls(argc, argv);
     else if (strcmp(argv[0], "fatcat") == 0) cmd_fatcat(argc, argv);
     else if (strcmp(argv[0], "fatmkdir") == 0) cmd_fatmkdir(argc, argv);
@@ -639,8 +772,8 @@ void shell_task(void *arg) {
     current_draft[0] = '\0';
     history_browse_idx = -1;
 
-    kprint_color(0x0A, "\n=== GEMOS RTOS Interactive Console Ready ===\n");
-    kprintf("gemos> ");
+    kprint_color(0x0A, "\n=== GEMIOS RTOS Interactive Console Ready ===\n");
+    kprintf("gemios> ");
 
     while (1) {
         xhci_poll();
@@ -657,7 +790,7 @@ void shell_task(void *arg) {
                 }
                 history_browse_idx = -1;
                 current_draft[0] = '\0';
-                kprintf("gemos> ");
+                kprintf("gemios> ");
             } else if (c == KEY_UP) {
                 // Navigate backwards in history
                 if (history_count > 0) {

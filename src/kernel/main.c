@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "types.h"
@@ -69,7 +69,7 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     vga_init();
 
     kprint_color(0x0E, "\n=======================================================\n");
-    kprint_color(0x0E, "   GEMOS - 32-bit x86 Preemptive Real-Time OS          \n");
+    kprint_color(0x0E, "   GEMIOS - 32-bit x86 Preemptive Real-Time OS          \n");
     kprint_color(0x0E, "   xHCI USB Host Controller, HID, Hub, Mass Storage    \n");
     kprint_color(0x0E, "=======================================================\n\n");
 

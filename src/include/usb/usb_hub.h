@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_USB_HUB_H
-#define GEMOS_USB_HUB_H
+#ifndef GEMIOS_USB_HUB_H
+#define GEMIOS_USB_HUB_H
 
 #include "usb_core.h"
 
@@ -24,4 +24,4 @@ void usb_hub_poll(void);
 size_t usb_hub_get_count(void);
 usb_hub_t *usb_hub_get(size_t index);
 
-#endif /* GEMOS_USB_HUB_H */
+#endif /* GEMIOS_USB_HUB_H */

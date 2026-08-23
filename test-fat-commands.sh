@@ -1,5 +1,5 @@
 #!/bin/bash
-# GEMOS RTOS - Comprehensive FATLS & FATCAT Test Suite
+# GEMIOS RTOS - Comprehensive FATLS & FATCAT Test Suite
 # Tests both FAT16 and FAT32 filesystems
 # Public Domain Dedication
 
@@ -9,7 +9,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
 echo "=========================================================="
-echo " Starting GEMOS FATLS & FATCAT Verification Test Suite"
+echo " Starting GEMIOS FATLS & FATCAT Verification Test Suite"
 echo "=========================================================="
 
 echo "[1/3] Building kernel and test disk images..."
@@ -33,7 +33,6 @@ cmd = [
     '-serial', 'stdio',
     '-device', 'qemu-xhci,id=xhci,p2=8,p3=8',
     '-device', 'usb-kbd,bus=xhci.0,port=1',
-    '-device', 'usb-mouse,bus=xhci.0,port=2',
     '-drive', 'if=none,id=usbstick,format=raw,file=build/test_disk.img',
     '-device', 'usb-storage,bus=xhci.0,port=3,drive=usbstick',
     '-device', 'usb-hub,bus=xhci.0,port=4',
@@ -75,7 +74,7 @@ def send_cmd(cmd_str):
 
 wait_prompt(timeout=6.0)
 
-for cmd_text in ['fatls\n', 'fatls usb0\n', 'fatcat README.TXT\n', 'fatcat STATUS.TXT\n', 'fatcat NONEXIST.TXT\n', 'fatls baddev\n']:
+for cmd_text in ['fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls usb0\n', 'fatcat README.TXT\n', 'fatcat STATUS.TXT\n', 'fatcat NONEXIST.TXT\n', 'fatls baddev\n']:
     send_cmd(cmd_text)
 
 read_more(1.0)
@@ -145,7 +144,7 @@ def send_cmd(cmd_str):
 
 wait_prompt(timeout=6.0)
 
-for cmd_text in ['fatls\n', 'fatls usb0\n', 'fatcat README.TXT\n', 'fatcat FAT32DOC.TXT\n', 'fatcat STATUS.TXT\n', 'fatcat NOFILE.TXT\n']:
+for cmd_text in ['fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls\n', 'fatls usb0\n', 'fatcat README.TXT\n', 'fatcat FAT32DOC.TXT\n', 'fatcat STATUS.TXT\n', 'fatcat NOFILE.TXT\n']:
     send_cmd(cmd_text)
 
 read_more(1.0)
@@ -172,14 +171,14 @@ echo "----------------------------------------------------------"
 
 # FAT16 Assertions
 grep -q "Filesystem on usb0 (FAT16)" "$FAT16_LOG" && echo "[PASS] FAT16: fatls detected FAT16" || { echo "[FAIL] FAT16 fatls"; exit 1; }
-grep -q "Welcome to GEMOS RTOS on USB Mass Storage (FAT16)" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat read README.TXT" || { echo "[FAIL] FAT16 fatcat README"; exit 1; }
+grep -q "Welcome to GEMIOS RTOS on USB Mass Storage (FAT16)" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat read README.TXT" || { echo "[FAIL] FAT16 fatcat README"; exit 1; }
 grep -q "All systems operational" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat read STATUS.TXT" || { echo "[FAIL] FAT16 fatcat STATUS"; exit 1; }
 grep -q "File 'NONEXIST.TXT' not found" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat handled missing file error" || { echo "[FAIL] FAT16 missing file"; exit 1; }
 grep -q "Block device 'baddev' not found" "$FAT16_LOG" && echo "[PASS] FAT16: fatls handled invalid device error" || { echo "[FAIL] FAT16 invalid device"; exit 1; }
 
 # FAT32 Assertions
 grep -q "Filesystem on usb0 (FAT32)" "$FAT32_LOG" && echo "[PASS] FAT32: fatls detected FAT32" || { echo "[FAIL] FAT32 fatls"; exit 1; }
-grep -q "Welcome to GEMOS RTOS on USB Mass Storage (FAT32)" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read README.TXT" || { echo "[FAIL] FAT32 fatcat README"; exit 1; }
+grep -q "Welcome to GEMIOS RTOS on USB Mass Storage (FAT32)" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read README.TXT" || { echo "[FAIL] FAT32 fatcat README"; exit 1; }
 grep -q "Supports cluster traversal and 32-bit FAT table lookups" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read FAT32DOC.TXT" || { echo "[FAIL] FAT32 fatcat FAT32DOC"; exit 1; }
 grep -q "FAT32 verification passed" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read STATUS.TXT" || { echo "[FAIL] FAT32 fatcat STATUS"; exit 1; }
 grep -q "File 'NOFILE.TXT' not found" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat handled missing file error" || { echo "[FAIL] FAT32 missing file"; exit 1; }

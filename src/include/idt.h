@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_IDT_H
-#define GEMOS_IDT_H
+#ifndef GEMIOS_IDT_H
+#define GEMIOS_IDT_H
 
 #include "types.h"
 
@@ -36,4 +36,4 @@ void idt_init(void);
 void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags);
 void register_interrupt_handler(uint8_t n, isr_handler_t handler);
 
-#endif /* GEMOS_IDT_H */
+#endif /* GEMIOS_IDT_H */

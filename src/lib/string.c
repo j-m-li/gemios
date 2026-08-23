@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "string.h"
@@ -103,6 +103,16 @@ char *strchr(const char *s, int c) {
     }
     if (c == 0) return (char*)s;
     return NULL;
+}
+
+char *strrchr(const char *s, int c) {
+    const char *last = NULL;
+    while (*s) {
+        if (*s == (char)c) last = s;
+        s++;
+    }
+    if (c == 0) return (char*)s;
+    return (char*)last;
 }
 
 char *strcat(char *dest, const char *src) {

@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_XHCI_REGS_H
-#define GEMOS_XHCI_REGS_H
+#ifndef GEMIOS_XHCI_REGS_H
+#define GEMIOS_XHCI_REGS_H
 
 #include "types.h"
 
@@ -99,4 +99,4 @@
 #define XHCI_LEGSUP_BIOS_OWNED  (1 << 16)
 #define XHCI_LEGSUP_OS_OWNED    (1 << 24)
 
-#endif /* GEMOS_XHCI_REGS_H */
+#endif /* GEMIOS_XHCI_REGS_H */

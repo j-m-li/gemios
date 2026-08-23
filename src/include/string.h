@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_STRING_H
-#define GEMOS_STRING_H
+#ifndef GEMIOS_STRING_H
+#define GEMIOS_STRING_H
 
 #include "types.h"
 #include <stdarg.h>
@@ -20,6 +20,7 @@ char *strncpy(char *dest, const char *src, size_t n);
 int strcmp(const char *s1, const char *s2);
 int strncmp(const char *s1, const char *s2, size_t n);
 char *strchr(const char *s, int c);
+char *strrchr(const char *s, int c);
 char *strcat(char *dest, const char *src);
 char *strncat(char *dest, const char *src, size_t n);
 char *strdup(const char *s);
@@ -32,4 +33,4 @@ void kprintf(const char *format, ...);
 void kprint_color(uint8_t color, const char *format, ...);
 void hexdump(const void *data, size_t size);
 
-#endif /* GEMOS_STRING_H */
+#endif /* GEMIOS_STRING_H */

@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_XHCI_H
-#define GEMOS_XHCI_H
+#ifndef GEMIOS_XHCI_H
+#define GEMIOS_XHCI_H
 
 #include "types.h"
 #include "pci.h"
@@ -92,4 +92,4 @@ int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep
 /* Root Hub management */
 void xhci_scan_ports(xhci_controller_t *ctrl);
 
-#endif /* GEMOS_XHCI_H */
+#endif /* GEMIOS_XHCI_H */

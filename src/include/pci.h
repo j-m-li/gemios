@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_PCI_H
-#define GEMOS_PCI_H
+#ifndef GEMIOS_PCI_H
+#define GEMIOS_PCI_H
 
 #include "types.h"
 
@@ -66,4 +66,4 @@ size_t pci_get_device_count(void);
 pci_device_t *pci_get_device(size_t index);
 const char *pci_class_to_string(uint8_t class_code, uint8_t subclass, uint8_t prog_if);
 
-#endif /* GEMOS_PCI_H */
+#endif /* GEMIOS_PCI_H */

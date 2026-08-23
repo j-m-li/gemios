@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_RTOS_SYNC_H
-#define GEMOS_RTOS_SYNC_H
+#ifndef GEMIOS_RTOS_SYNC_H
+#define GEMIOS_RTOS_SYNC_H
 
 #include "task.h"
 
@@ -23,6 +23,7 @@ void rtos_sem_signal(rtos_sem_t *sem);
 /* Mutex with priority inheritance support */
 typedef struct {
     bool locked;
+    uint32_t recursion_count;
     task_t *owner;
     task_t *wait_head;
     task_t *wait_tail;
@@ -62,4 +63,4 @@ uint32_t rtos_event_wait(rtos_event_t *ev, uint32_t mask, bool clear_on_exit, ui
 void rtos_event_set(rtos_event_t *ev, uint32_t mask);
 void rtos_event_clear(rtos_event_t *ev, uint32_t mask);
 
-#endif /* GEMOS_RTOS_SYNC_H */
+#endif /* GEMIOS_RTOS_SYNC_H */

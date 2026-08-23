@@ -1,5 +1,5 @@
 #!/bin/bash
-# GEMOS RTOS - FAT32 Automated Test Suite
+# GEMIOS RTOS - FAT32 Automated Test Suite
 # Public Domain Dedication
 
 set -e
@@ -7,7 +7,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-echo "[1/3] Building GEMOS RTOS and 64MB FAT32 Disk..."
+echo "[1/3] Building GEMIOS RTOS and 64MB FAT32 Disk..."
 make clean
 make
 

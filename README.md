@@ -1,6 +1,6 @@
-# GEMOS: 32-bit x86 Preemptive RTOS with USB xHCI Support
+# GEMIOS: 32-bit x86 Preemptive RTOS with USB xHCI Support
 
-**GEMOS** is a bare-metal, preemptive Real-Time Operating System (RTOS) for x86 32-bit (i686) systems compiled with LLVM/Clang. It features a USB 3.0/2.0 xHCI host controller stack, USB HID Keyboard & Mouse drivers, USB Mass Storage (BOT/SCSI) driver, USB Hub support with cascaded device routing, FAT filesystem support, and an interactive real-time shell with command history.
+**GEMIOS** is a bare-metal, preemptive Real-Time Operating System (RTOS) for x86 32-bit (i686) systems compiled with LLVM/Clang. It features a USB 3.0/2.0 xHCI host controller stack, USB HID Keyboard & Mouse drivers, USB Mass Storage (BOT/SCSI) driver, USB Hub support with cascaded device routing, FAT filesystem support, and an interactive real-time shell with command history.
 
 All code is dedicated to the **Public Domain** (UNLICENSE).
 
@@ -72,7 +72,7 @@ All code is dedicated to the **Public Domain** (UNLICENSE).
 ```bash
 make
 ```
-This builds `build/gemos.elf` using Clang and creates a formatted 32MB FAT test disk image (`build/test_disk.img`).
+This builds `build/gemios.elf` using Clang and creates a formatted 32MB FAT test disk image (`build/test_disk.img`).
 
 ### 2. Launch in QEMU VM
 ```bash

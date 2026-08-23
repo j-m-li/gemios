@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_USB_DEFS_H
-#define GEMOS_USB_DEFS_H
+#ifndef GEMIOS_USB_DEFS_H
+#define GEMIOS_USB_DEFS_H
 
 #include "types.h"
 
@@ -234,4 +234,4 @@ typedef struct usb_hub_descriptor usb_hub_descriptor_t;
 const char *usb_speed_to_string(uint8_t speed);
 const char *usb_class_to_string(uint8_t class_code);
 
-#endif /* GEMOS_USB_DEFS_H */
+#endif /* GEMIOS_USB_DEFS_H */

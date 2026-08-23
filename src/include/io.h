@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_IO_H
-#define GEMOS_IO_H
+#ifndef GEMIOS_IO_H
+#define GEMIOS_IO_H
 
 #include "types.h"
 
@@ -91,7 +91,9 @@ static inline uint32_t mmio_read32(uintptr_t addr) {
 }
 
 static inline uint64_t mmio_read64(uintptr_t addr) {
-    return *(volatile uint64_t*)addr;
+    uint32_t low = *(volatile uint32_t*)addr;
+    uint32_t high = *(volatile uint32_t*)(addr + 4);
+    return ((uint64_t)high << 32) | low;
 }
 
 static inline void mmio_write8(uintptr_t addr, uint8_t val) {
@@ -107,7 +109,8 @@ static inline void mmio_write32(uintptr_t addr, uint32_t val) {
 }
 
 static inline void mmio_write64(uintptr_t addr, uint64_t val) {
-    *(volatile uint64_t*)addr = val;
+    *(volatile uint32_t*)addr = (uint32_t)val;
+    *(volatile uint32_t*)(addr + 4) = (uint32_t)(val >> 32);
 }
 
-#endif /* GEMOS_IO_H */
+#endif /* GEMIOS_IO_H */

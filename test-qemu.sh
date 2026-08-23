@@ -1,5 +1,5 @@
 #!/bin/bash
-# GEMOS RTOS - Automated Test Suite
+# GEMIOS RTOS - Automated Test Suite
 # Public Domain Dedication
 
 set -e
@@ -7,7 +7,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-echo "[1/3] Building GEMOS RTOS..."
+echo "[1/3] Building GEMIOS RTOS..."
 make clean
 make
 
@@ -94,8 +94,8 @@ grep -q "USB Mass Storage initialized" "$SERIAL_LOG" && echo "[PASS] USB Mass St
 grep -q "Initialized USB Hub" "$SERIAL_LOG" && echo "[PASS] USB Hub driver initialized" || { echo "[FAIL] USB Hub"; exit 1; }
 grep -q "device on Hub Slot" "$SERIAL_LOG" && echo "[PASS] Downstream device on USB Hub enumerated" || { echo "[FAIL] USB Hub Downstream device"; exit 1; }
 grep -q "Registered 'usb0'" "$SERIAL_LOG" && echo "[PASS] Block device 'usb0' registered" || { echo "[FAIL] Block device registration"; exit 1; }
-grep -q "GEMOS RTOS Interactive Console Ready" "$SERIAL_LOG" && echo "[PASS] Interactive Shell task running" || { echo "[FAIL] Shell task"; exit 1; }
+grep -q "GEMIOS RTOS Interactive Console Ready" "$SERIAL_LOG" && echo "[PASS] Interactive Shell task running" || { echo "[FAIL] Shell task"; exit 1; }
 grep -q "README.TXT" "$SERIAL_LOG" && echo "[PASS] Keyboard typing & FAT command execution verified" || { echo "[FAIL] FAT command execution"; exit 1; }
 
 echo ""
-echo ">>> ALL GEMOS RTOS TESTS PASSED SUCCESSFULLY! KEYBOARD FULLY OPERATIONAL! <<<"
+echo ">>> ALL GEMIOS RTOS TESTS PASSED SUCCESSFULLY! KEYBOARD FULLY OPERATIONAL! <<<"

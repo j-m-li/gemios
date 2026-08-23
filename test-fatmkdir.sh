@@ -1,5 +1,5 @@
 #!/bin/bash
-# GEMOS RTOS - Automated fatmkdir Verification Test Suite
+# GEMIOS RTOS - Automated fatmkdir Verification Test Suite
 # Tests directory creation on FAT16 and FAT32 filesystems
 # Public Domain Dedication
 
@@ -9,7 +9,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
 echo "=========================================================="
-echo " Starting GEMOS fatmkdir Verification Test Suite"
+echo " Starting GEMIOS fatmkdir Verification Test Suite"
 echo "=========================================================="
 
 echo "[1/3] Building kernel and fresh test disk images..."

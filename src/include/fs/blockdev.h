@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_BLOCKDEV_H
-#define GEMOS_BLOCKDEV_H
+#ifndef GEMIOS_BLOCKDEV_H
+#define GEMIOS_BLOCKDEV_H
 
 #include "types.h"
 
@@ -31,4 +31,4 @@ block_dev_t *blockdev_get(const char *name);
 block_dev_t *blockdev_get_by_index(size_t index);
 size_t blockdev_count(void);
 
-#endif /* GEMOS_BLOCKDEV_H */
+#endif /* GEMIOS_BLOCKDEV_H */

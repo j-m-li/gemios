@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_PIC_H
-#define GEMOS_PIC_H
+#ifndef GEMIOS_PIC_H
+#define GEMIOS_PIC_H
 
 #include "types.h"
 
@@ -23,4 +23,4 @@ void pic_mask_irq(uint8_t irq);
 void pic_unmask_irq(uint8_t irq);
 void pic_disable(void);
 
-#endif /* GEMOS_PIC_H */
+#endif /* GEMIOS_PIC_H */

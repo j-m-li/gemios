@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_HEAP_H
-#define GEMOS_HEAP_H
+#ifndef GEMIOS_HEAP_H
+#define GEMIOS_HEAP_H
 
 #include "types.h"
 
@@ -17,4 +17,4 @@ void kfree(void *ptr);
 
 void heap_stats(size_t *total, size_t *used, size_t *free);
 
-#endif /* GEMOS_HEAP_H */
+#endif /* GEMIOS_HEAP_H */

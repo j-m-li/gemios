@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_XHCI_TRB_H
-#define GEMOS_XHCI_TRB_H
+#ifndef GEMIOS_XHCI_TRB_H
+#define GEMIOS_XHCI_TRB_H
 
 #include "types.h"
 
@@ -99,9 +99,9 @@
 
 /* Generic 16-byte TRB layout */
 struct xhci_trb {
-    uint64_t parameter;
-    uint32_t status;
-    uint32_t control;
+    volatile uint64_t parameter;
+    volatile uint32_t status;
+    volatile uint32_t control;
 } PACKED;
 typedef struct xhci_trb xhci_trb_t;
 
@@ -156,4 +156,4 @@ struct xhci_input_ctx {
 } PACKED ALIGNED(64);
 typedef struct xhci_input_ctx xhci_input_ctx_t;
 
-#endif /* GEMOS_XHCI_TRB_H */
+#endif /* GEMIOS_XHCI_TRB_H */

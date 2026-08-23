@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_RTOS_TASK_H
-#define GEMOS_RTOS_TASK_H
+#ifndef GEMIOS_RTOS_TASK_H
+#define GEMIOS_RTOS_TASK_H
 
 #include "types.h"
 
@@ -54,4 +54,4 @@ size_t rtos_get_task_count(void);
 task_t *rtos_get_task_by_index(size_t index);
 const char *rtos_task_state_str(task_state_t state);
 
-#endif /* GEMOS_RTOS_TASK_H */
+#endif /* GEMIOS_RTOS_TASK_H */

@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_FAT_H
-#define GEMOS_FAT_H
+#ifndef GEMIOS_FAT_H
+#define GEMIOS_FAT_H
 
 #include "types.h"
 #include "blockdev.h"
@@ -94,8 +94,10 @@ typedef struct fat_fs {
 
 int fat_mount(block_dev_t *bdev, fat_fs_t *fs);
 int fat_list_root(fat_fs_t *fs);
-int fat_read_file(fat_fs_t *fs, const char *filename, void *buf, size_t max_len, size_t *out_len);
-int fat_write_file(fat_fs_t *fs, const char *filename, const void *buf, size_t len);
-int fat_mkdir(fat_fs_t *fs, const char *dirname);
+int fat_list_dir(fat_fs_t *fs, const char *path);
+int fat_is_dir(fat_fs_t *fs, const char *path);
+int fat_read_file(fat_fs_t *fs, const char *path, void *buf, size_t max_len, size_t *out_len);
+int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len);
+int fat_mkdir(fat_fs_t *fs, const char *path);
 
-#endif /* GEMOS_FAT_H */
+#endif /* GEMIOS_FAT_H */

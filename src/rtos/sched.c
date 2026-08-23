@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
 #include "sched.h"
@@ -16,6 +16,8 @@ static size_t last_scheduled_idx = 0;
 static void idle_task_func(void *arg) {
     UNUSED(arg);
     while (1) {
+	rtos_yield();
+	sti();
         hlt();
     }
 }
@@ -54,11 +56,15 @@ static task_t *find_next_ready_task(void) {
                 highest_priority = t->priority;
                 best_task = t;
                 best_idx = idx;
-            }
+	    }
+            if ((int)t->priority < 15){
+		t->priority++;
+	    }
         }
     }
 
     if (best_task) {
+	best_task->priority = best_task->base_priority;
         last_scheduled_idx = best_idx;
         return best_task;
     }

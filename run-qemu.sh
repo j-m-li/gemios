@@ -1,5 +1,5 @@
 #!/bin/bash
-# GEMOS RTOS - QEMU Virtual Machine Launch Script
+# GEMIOS RTOS - QEMU Virtual Machine Launch Script
 # Public Domain Dedication
 
 set -e
@@ -22,7 +22,7 @@ done
 
 # Build kernel and disk image if needed
 if [ ! -f "build/gemios.elf" ] || [ ! -f "$DISK_FILE" ]; then
-    echo "[*] Building GEMOS RTOS and disk images..."
+    echo "[*] Building GEMIOS RTOS and disk images..."
     make
 fi
 
@@ -32,7 +32,7 @@ if ! command -v $QEMU &> /dev/null; then
 fi
 
 echo "=========================================================="
-echo " Starting GEMOS x86-32 Preemptive RTOS in QEMU VM"
+echo " Starting GEMIOS x86-32 Preemptive RTOS in QEMU VM"
 echo " Configuration:"
 echo "   - Host Controller: USB 3.0 xHCI"
 echo "   - Disk Image:      $DISK_FILE"
@@ -40,12 +40,15 @@ echo "   - Devices:         USB Keyboard, USB Mouse, USB Storage, USB Hub"
 echo "   - Downstream:      Secondary USB Mouse on USB Hub"
 echo "=========================================================="
 
-exec $QEMU -kernel build/gemios.elf -m 256M \
+#exec $QEMU -s -S -kernel build/gemios.elf -m 256M \
+
+exec $QEMU  -kernel build/gemios.elf -m 256M \
     $GRAPHICS_FLAG \
     -device qemu-xhci,id=xhci,p2=8,p3=8 \
     -device usb-kbd,bus=xhci.0,port=1 \
-    -device usb-mouse,bus=xhci.0,port=2 \
     -drive if=none,id=usbstick,format=raw,file=$DISK_FILE \
     -device usb-storage,bus=xhci.0,port=3,drive=usbstick \
     -device usb-hub,bus=xhci.0,port=4 \
-    -device usb-mouse,bus=xhci.0,port=4.1
+    -device usb-hub,bus=xhci.0,port=4.2 \
+    -device usb-mouse,bus=xhci.0,port=4.2.1 \
+

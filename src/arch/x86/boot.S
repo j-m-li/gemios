@@ -1,5 +1,5 @@
 # This is free and unencumbered software released into the public domain.
-# GEMOS Preemptive Real-Time Operating System
+# GEMIOS Preemptive Real-Time Operating System
 
 # Multiboot header and kernel entry point for 32-bit x86
 .set ALIGN,    1<<0             # align loaded modules on page boundaries

@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_MMU_H
-#define GEMOS_MMU_H
+#ifndef GEMIOS_MMU_H
+#define GEMIOS_MMU_H
 
 #include "types.h"
 
@@ -21,4 +21,4 @@ size_t pmm_get_total_pages(void);
 size_t pmm_get_free_pages(void);
 size_t pmm_get_used_pages(void);
 
-#endif /* GEMOS_MMU_H */
+#endif /* GEMIOS_MMU_H */

@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_USB_HID_H
-#define GEMOS_USB_HID_H
+#ifndef GEMIOS_USB_HID_H
+#define GEMIOS_USB_HID_H
 
 #include "usb_core.h"
 
@@ -63,4 +63,4 @@ uint16_t usb_kbd_getchar(void);
 /* Mouse interface for system */
 void usb_mouse_get_state(int32_t *x, int32_t *y, uint8_t *buttons);
 
-#endif /* GEMOS_USB_HID_H */
+#endif /* GEMIOS_USB_HID_H */

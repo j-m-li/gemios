@@ -1,10 +1,10 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMOS Preemptive Real-Time Operating System
+ * GEMIOS Preemptive Real-Time Operating System
  */
 
-#ifndef GEMOS_GDT_H
-#define GEMOS_GDT_H
+#ifndef GEMIOS_GDT_H
+#define GEMIOS_GDT_H
 
 #include "types.h"
 
@@ -27,4 +27,4 @@ struct gdt_ptr {
 
 void gdt_init(void);
 
-#endif /* GEMOS_GDT_H */
+#endif /* GEMIOS_GDT_H */
