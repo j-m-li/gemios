@@ -34,11 +34,14 @@ void heap_init(void *start_addr, size_t size) {
 }
 
 void *kmalloc(size_t size) {
+    uint32_t flags;
+    heap_block_t *curr;
+
     if (size == 0) return NULL;
 
-    uint32_t flags = irq_save();
+    flags = irq_save();
     size = ALIGN_UP(size, 8);
-    heap_block_t *curr = block_head;
+    curr = block_head;
 
     while (curr) {
         if (curr->magic != HEAP_MAGIC) {
@@ -48,7 +51,7 @@ void *kmalloc(size_t size) {
         }
 
         if (curr->is_free && curr->size >= size) {
-            // Check if we can split this block
+            /* Check if we can split this block */
             if (curr->size >= size + sizeof(heap_block_t) + 16) {
                 heap_block_t *new_block = (heap_block_t*)((uint8_t*)curr + sizeof(heap_block_t) + size);
                 new_block->magic = HEAP_MAGIC;
@@ -73,12 +76,15 @@ void *kmalloc(size_t size) {
     }
 
     irq_restore(flags);
-    return NULL; // Out of memory
+    return NULL; /* Out of memory */
 }
 
 void *kcalloc(size_t num, size_t size) {
-    size_t total = num * size;
-    void *ptr = kmalloc(total);
+    size_t total;
+    void *ptr;
+
+    total = num * size;
+    ptr = kmalloc(total);
     if (ptr) {
         memset(ptr, 0, total);
     }
@@ -86,32 +92,43 @@ void *kcalloc(size_t num, size_t size) {
 }
 
 void *kmalloc_aligned(size_t size, size_t alignment) {
+    size_t total;
+    void *raw;
+    uintptr_t raw_addr;
+    uintptr_t aligned_addr;
+    void **ptr_slot;
+
     if (alignment <= 8) {
         return kmalloc(size);
     }
 
-    size_t total = size + alignment + sizeof(void*);
-    void *raw = kmalloc(total);
+    total = size + alignment + sizeof(void*);
+    raw = kmalloc(total);
     if (!raw) return NULL;
 
-    uintptr_t raw_addr = (uintptr_t)raw + sizeof(void*);
-    uintptr_t aligned_addr = ALIGN_UP(raw_addr, alignment);
+    raw_addr = (uintptr_t)raw + sizeof(void*);
+    aligned_addr = ALIGN_UP(raw_addr, alignment);
 
-    void **ptr_slot = (void**)(aligned_addr - sizeof(void*));
+    ptr_slot = (void**)(aligned_addr - sizeof(void*));
     *ptr_slot = raw;
 
     return (void*)aligned_addr;
 }
 
 void *krealloc(void *ptr, size_t new_size) {
+    uint32_t flags;
+    heap_block_t *block;
+    size_t old_size;
+    void *new_ptr;
+
     if (!ptr) return kmalloc(new_size);
     if (new_size == 0) {
         kfree(ptr);
         return NULL;
     }
 
-    uint32_t flags = irq_save();
-    heap_block_t *block = (heap_block_t*)((uint8_t*)ptr - sizeof(heap_block_t));
+    flags = irq_save();
+    block = (heap_block_t*)((uint8_t*)ptr - sizeof(heap_block_t));
     if (block->magic != HEAP_MAGIC) {
         irq_restore(flags);
         return NULL;
@@ -122,10 +139,10 @@ void *krealloc(void *ptr, size_t new_size) {
         return ptr;
     }
 
-    size_t old_size = block->size;
+    old_size = block->size;
     irq_restore(flags);
 
-    void *new_ptr = kmalloc(new_size);
+    new_ptr = kmalloc(new_size);
     if (new_ptr) {
         memcpy(new_ptr, ptr, old_size);
         kfree(ptr);
@@ -134,14 +151,17 @@ void *krealloc(void *ptr, size_t new_size) {
 }
 
 void kfree(void *ptr) {
+    uint32_t flags;
+    heap_block_t *block;
+
     if (!ptr) return;
 
-    uint32_t flags = irq_save();
+    flags = irq_save();
 
-    // Check if pointer is aligned allocation
-    heap_block_t *block = (heap_block_t*)((uint8_t*)ptr - sizeof(heap_block_t));
+    /* Check if pointer is aligned allocation */
+    block = (heap_block_t*)((uint8_t*)ptr - sizeof(heap_block_t));
     if (block->magic != HEAP_MAGIC) {
-        // It might be an aligned pointer
+        /* It might be an aligned pointer */
         void **ptr_slot = (void**)((uintptr_t)ptr - sizeof(void*));
         void *raw = *ptr_slot;
         block = (heap_block_t*)((uint8_t*)raw - sizeof(heap_block_t));
@@ -154,7 +174,7 @@ void kfree(void *ptr) {
 
     block->is_free = true;
 
-    // Coalesce with next block if free
+    /* Coalesce with next block if free */
     if (block->next && block->next->is_free) {
         block->size += sizeof(heap_block_t) + block->next->size;
         block->next = block->next->next;
@@ -163,7 +183,7 @@ void kfree(void *ptr) {
         }
     }
 
-    // Coalesce with prev block if free
+    /* Coalesce with prev block if free */
     if (block->prev && block->prev->is_free) {
         block->prev->size += sizeof(heap_block_t) + block->size;
         block->prev->next = block->next;
@@ -176,9 +196,15 @@ void kfree(void *ptr) {
 }
 
 void heap_stats(size_t *total, size_t *used, size_t *free_mem) {
-    uint32_t flags = irq_save();
-    size_t u = 0, f = 0;
-    heap_block_t *curr = block_head;
+    uint32_t flags;
+    size_t u;
+    size_t f;
+    heap_block_t *curr;
+
+    flags = irq_save();
+    u = 0;
+    f = 0;
+    curr = block_head;
 
     while (curr) {
         if (curr->magic == HEAP_MAGIC) {

@@ -37,46 +37,46 @@
 #define XHCI_OP_USBSTS          0x04
 #define XHCI_OP_PAGESIZE        0x08
 #define XHCI_OP_DNCTRL          0x14
-#define XHCI_OP_CRCR            0x18 // 64-bit
-#define XHCI_OP_DCBAAP          0x30 // 64-bit
+#define XHCI_OP_CRCR            0x18 /* 64-bit */
+#define XHCI_OP_DCBAAP          0x30 /* 64-bit */
 #define XHCI_OP_CONFIG          0x38
 #define XHCI_OP_PORTSC_BASE     0x400
 
 /* USBCMD Bits */
-#define XHCI_CMD_RS             (1 << 0)  // Run/Stop
-#define XHCI_CMD_HCRST          (1 << 1)  // Host Controller Reset
-#define XHCI_CMD_INTE           (1 << 2)  // Interrupter Enable
-#define XHCI_CMD_HSEE           (1 << 3)  // Host System Error Enable
+#define XHCI_CMD_RS             (1 << 0)  /* Run/Stop */
+#define XHCI_CMD_HCRST          (1 << 1)  /* Host Controller Reset */
+#define XHCI_CMD_INTE           (1 << 2)  /* Interrupter Enable */
+#define XHCI_CMD_HSEE           (1 << 3)  /* Host System Error Enable */
 
 /* USBSTS Bits */
-#define XHCI_STS_HCH            (1 << 0)  // HC Halted
-#define XHCI_STS_HSE            (1 << 2)  // Host System Error
-#define XHCI_STS_EINT           (1 << 3)  // Event Interrupt
-#define XHCI_STS_PCD            (1 << 4)  // Port Change Detect
-#define XHCI_STS_CNR            (1 << 11) // Controller Not Ready
+#define XHCI_STS_HCH            (1 << 0)  /* HC Halted */
+#define XHCI_STS_HSE            (1 << 2)  /* Host System Error */
+#define XHCI_STS_EINT           (1 << 3)  /* Event Interrupt */
+#define XHCI_STS_PCD            (1 << 4)  /* Port Change Detect */
+#define XHCI_STS_CNR            (1 << 11) /* Controller Not Ready */
 
 /* CRCR Bits */
-#define XHCI_CRCR_RCS           (1ULL << 0) // Ring Cycle State
-#define XHCI_CRCR_CS            (1ULL << 1) // Command Stop
-#define XHCI_CRCR_CA            (1ULL << 2) // Command Abort
-#define XHCI_CRCR_CRR           (1ULL << 3) // Command Ring Running
+#define XHCI_CRCR_RCS           (1ULL << 0) /* Ring Cycle State */
+#define XHCI_CRCR_CS            (1ULL << 1) /* Command Stop */
+#define XHCI_CRCR_CA            (1ULL << 2) /* Command Abort */
+#define XHCI_CRCR_CRR           (1ULL << 3) /* Command Ring Running */
 
 /* PORTSC Bits */
-#define XHCI_PORTSC_CCS         (1 << 0)   // Current Connect Status
-#define XHCI_PORTSC_PED         (1 << 1)   // Port Enabled/Disabled
-#define XHCI_PORTSC_OCA         (1 << 3)   // Over-current Active
-#define XHCI_PORTSC_PR          (1 << 4)   // Port Reset
-#define XHCI_PORTSC_PLS_MASK    (0xF << 5) // Port Link State
-#define XHCI_PORTSC_PP          (1 << 9)   // Port Power
-#define XHCI_PORTSC_SPEED(p)    (((p) >> 10) & 0x0F) // Port Speed
-#define XHCI_PORTSC_LWS         (1 << 16)  // Port Link State Write Strobe
-#define XHCI_PORTSC_CSC         (1 << 17)  // Connect Status Change
-#define XHCI_PORTSC_PEC         (1 << 18)  // Port Enable Change
-#define XHCI_PORTSC_WRC         (1 << 19)  // Warm Port Reset Change
-#define XHCI_PORTSC_OCC         (1 << 20)  // Over-current Change
-#define XHCI_PORTSC_PRC         (1 << 21)  // Port Reset Change
-#define XHCI_PORTSC_PLC         (1 << 22)  // Port Link State Change
-#define XHCI_PORTSC_CEC         (1 << 23)  // Config Error Change
+#define XHCI_PORTSC_CCS         (1 << 0)   /* Current Connect Status */
+#define XHCI_PORTSC_PED         (1 << 1)   /* Port Enabled/Disabled */
+#define XHCI_PORTSC_OCA         (1 << 3)   /* Over-current Active */
+#define XHCI_PORTSC_PR          (1 << 4)   /* Port Reset */
+#define XHCI_PORTSC_PLS_MASK    (0xF << 5) /* Port Link State */
+#define XHCI_PORTSC_PP          (1 << 9)   /* Port Power */
+#define XHCI_PORTSC_SPEED(p)    (((p) >> 10) & 0x0F) /* Port Speed */
+#define XHCI_PORTSC_LWS         (1 << 16)  /* Port Link State Write Strobe */
+#define XHCI_PORTSC_CSC         (1 << 17)  /* Connect Status Change */
+#define XHCI_PORTSC_PEC         (1 << 18)  /* Port Enable Change */
+#define XHCI_PORTSC_WRC         (1 << 19)  /* Warm Port Reset Change */
+#define XHCI_PORTSC_OCC         (1 << 20)  /* Over-current Change */
+#define XHCI_PORTSC_PRC         (1 << 21)  /* Port Reset Change */
+#define XHCI_PORTSC_PLC         (1 << 22)  /* Port Link State Change */
+#define XHCI_PORTSC_CEC         (1 << 23)  /* Config Error Change */
 #define XHCI_PORTSC_W1C_MASK    (XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC | \
                                  XHCI_PORTSC_OCC | XHCI_PORTSC_PRC | XHCI_PORTSC_PLC | \
                                  XHCI_PORTSC_CEC)
@@ -85,12 +85,12 @@
 #define XHCI_INTR_IMAN          0x00
 #define XHCI_INTR_IMOD          0x04
 #define XHCI_INTR_ERSTSZ        0x08
-#define XHCI_INTR_ERSTBA        0x10 // 64-bit
-#define XHCI_INTR_ERDP          0x18 // 64-bit
+#define XHCI_INTR_ERSTBA        0x10 /* 64-bit */
+#define XHCI_INTR_ERDP          0x18 /* 64-bit */
 
-#define XHCI_IMAN_IP            (1 << 0) // Interrupt Pending
-#define XHCI_IMAN_IE            (1 << 1) // Interrupt Enable
-#define XHCI_ERDP_EHB           (1ULL << 3) // Event Handler Busy
+#define XHCI_IMAN_IP            (1 << 0) /* Interrupt Pending */
+#define XHCI_IMAN_IE            (1 << 1) /* Interrupt Enable */
+#define XHCI_ERDP_EHB           (1ULL << 3) /* Event Handler Busy */
 
 /* Extended Capabilities */
 #define XHCI_EXT_CAP_LEGSUP     0x01

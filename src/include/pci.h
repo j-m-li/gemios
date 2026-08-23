@@ -41,7 +41,7 @@ struct pci_device {
     uint8_t  header_type;
     uint32_t bar[6];
     uint32_t bar_size[6];
-    uint8_t  bar_type[6]; // 0=Memory, 1=IO
+    uint8_t  bar_type[6]; /* 0=Memory, 1=IO */
     uint8_t  irq_pin;
     uint8_t  irq_line;
 };

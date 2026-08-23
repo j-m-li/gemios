@@ -16,8 +16,8 @@ static size_t last_scheduled_idx = 0;
 static void idle_task_func(void *arg) {
     UNUSED(arg);
     while (1) {
-	rtos_yield();
-	sti();
+        rtos_yield();
+        sti();
         hlt();
     }
 }
@@ -38,17 +38,27 @@ task_t *rtos_current_task(void) {
 }
 
 static task_t *find_next_ready_task(void) {
-    task_t *best_task = NULL;
-    int highest_priority = -1;
-    size_t count = rtos_get_task_count();
+    task_t *best_task;
+    int highest_priority;
+    size_t count;
+    size_t start_idx;
+    size_t best_idx;
+    size_t i;
+
+    best_task = NULL;
+    highest_priority = -1;
+    count = rtos_get_task_count();
     if (count == 0) return idle_task;
 
-    size_t start_idx = (last_scheduled_idx + 1) % count;
-    size_t best_idx = 0;
+    start_idx = (last_scheduled_idx + 1) % count;
+    best_idx = 0;
 
-    for (size_t i = 0; i < count; i++) {
-        size_t idx = (start_idx + i) % count;
-        task_t *t = rtos_get_task_by_index(idx);
+    for (i = 0; i < count; i++) {
+        size_t idx;
+        task_t *t;
+
+        idx = (start_idx + i) % count;
+        t = rtos_get_task_by_index(idx);
         if (!t) continue;
 
         if (t->state == TASK_STATE_READY || t->state == TASK_STATE_RUNNING) {
@@ -56,15 +66,15 @@ static task_t *find_next_ready_task(void) {
                 highest_priority = t->priority;
                 best_task = t;
                 best_idx = idx;
-	    }
-            if ((int)t->priority < 15){
-		t->priority++;
-	    }
+            }
+            if ((int)t->priority < 15) {
+                t->priority++;
+            }
         }
     }
 
     if (best_task) {
-	best_task->priority = best_task->base_priority;
+        best_task->priority = best_task->base_priority;
         last_scheduled_idx = best_idx;
         return best_task;
     }
@@ -73,12 +83,17 @@ static task_t *find_next_ready_task(void) {
 }
 
 registers_t *rtos_schedule_from_isr(registers_t *regs) {
+    task_t *prev;
+    task_t *next;
+
     if (!scheduler_running) return regs;
 
-    // 1. Update sleeping tasks on timer tick
+    /* 1. Update sleeping tasks on timer tick */
     if (regs->int_no == 32) {
-        size_t count = rtos_get_task_count();
-        for (size_t i = 0; i < count; i++) {
+        size_t count;
+        size_t i;
+        count = rtos_get_task_count();
+        for (i = 0; i < count; i++) {
             task_t *t = rtos_get_task_by_index(i);
             if (!t) continue;
 
@@ -97,9 +112,9 @@ registers_t *rtos_schedule_from_isr(registers_t *regs) {
         current_task->runtime_ticks++;
     }
 
-    // 2. Select next highest priority ready task
-    task_t *prev = current_task;
-    task_t *next = find_next_ready_task();
+    /* 2. Select next highest priority ready task */
+    prev = current_task;
+    next = find_next_ready_task();
     if (!next) next = idle_task;
 
     if (prev != next) {
@@ -121,7 +136,7 @@ registers_t *rtos_schedule_from_isr(registers_t *regs) {
 
 void rtos_yield(void) {
     if (scheduler_running) {
-        __asm__ volatile ("int $0x80" ::: "memory");
+        arch_trigger_yield();
     }
 }
 
@@ -150,27 +165,18 @@ void rtos_task_unblock(task_t *task) {
 }
 
 void rtos_sched_start(void) {
+    task_t *first;
+
     scheduler_running = true;
 
-    task_t *first = find_next_ready_task();
+    first = find_next_ready_task();
     if (!first) first = idle_task;
 
     first->state = TASK_STATE_RUNNING;
     current_task = first;
 
-    // Restore context of first task and iret into it
-    __asm__ volatile (
-        "movl %0, %%esp\n"
-        "popl %%eax\n"
-        "mov %%ax, %%ds\n"
-        "mov %%ax, %%es\n"
-        "mov %%ax, %%fs\n"
-        "mov %%ax, %%gs\n"
-        "popa\n"
-        "addl $8, %%esp\n"
-        "iret\n"
-        : : "r"(first->esp) : "memory"
-    );
+    /* Restore context of first task and iret into it */
+    rtos_start_first_task(first->esp);
 
     for (;;) { hlt(); }
 }

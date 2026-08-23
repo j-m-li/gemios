@@ -15,11 +15,11 @@
 #define USB_MAX_INTERFACES 8
 
 typedef struct usb_endpoint {
-    uint8_t address;          // Endpoint Address (e.g. 0x81, 0x02)
-    uint8_t attributes;       // Transfer type
-    uint16_t max_packet_size; // Max packet size
-    uint8_t interval;         // Polling interval
-    uint8_t dci;              // Device Context Index (1..31)
+    uint8_t address;          /* Endpoint Address (e.g. 0x81, 0x02) */
+    uint8_t attributes;       /* Transfer type */
+    uint16_t max_packet_size; /* Max packet size */
+    uint8_t interval;         /* Polling interval */
+    uint8_t dci;              /* Device Context Index (1..31) */
 } usb_endpoint_t;
 
 typedef struct usb_interface {

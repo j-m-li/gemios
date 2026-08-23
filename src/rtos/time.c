@@ -9,37 +9,46 @@
 #include "io.h"
 
 void rtos_sleep_ms(uint32_t ms) {
+    uint32_t i;
+    volatile int d;
+    uint32_t ticks;
+
     if (ms == 0) {
         rtos_yield();
         return;
     }
 
     if (!rtos_is_running()) {
-        // Pre-scheduler busy wait
-        for (uint32_t i = 0; i < ms; i++) {
-            for (volatile int d = 0; d < 10000; d++);
+        /* Pre-scheduler busy wait */
+        for (i = 0; i < ms; i++) {
+            for (d = 0; d < 10000; d++);
         }
         return;
     }
 
-    uint32_t ticks = rtos_ms_to_ticks(ms);
+    ticks = rtos_ms_to_ticks(ms);
     if (ticks == 0) ticks = 1;
 
     rtos_delay_ticks(ticks);
 }
 
 void rtos_delay_ticks(uint32_t ticks) {
+    uint32_t i;
+    volatile int d;
+    uint32_t flags;
+    task_t *cur;
+
     if (ticks == 0) return;
 
     if (!rtos_is_running()) {
-        for (uint32_t i = 0; i < ticks; i++) {
-            for (volatile int d = 0; d < 10000; d++);
+        for (i = 0; i < ticks; i++) {
+            for (d = 0; d < 10000; d++);
         }
         return;
     }
 
-    uint32_t flags = irq_save();
-    task_t *cur = rtos_current_task();
+    flags = irq_save();
+    cur = rtos_current_task();
     if (cur) {
         cur->sleep_ticks = ticks;
         cur->state = TASK_STATE_SLEEPING;
@@ -47,8 +56,8 @@ void rtos_delay_ticks(uint32_t ticks) {
         rtos_reschedule();
     } else {
         irq_restore(flags);
-        for (uint32_t i = 0; i < ticks; i++) {
-            for (volatile int d = 0; d < 10000; d++);
+        for (i = 0; i < ticks; i++) {
+            for (d = 0; d < 10000; d++);
         }
     }
 }

@@ -10,11 +10,11 @@
 
 /* USB Device Speeds */
 #define USB_SPEED_UNKNOWN       0
-#define USB_SPEED_FULL          1 // 12 Mbps
-#define USB_SPEED_LOW           2 // 1.5 Mbps
-#define USB_SPEED_HIGH          3 // 480 Mbps
-#define USB_SPEED_SUPER         4 // 5 Gbps
-#define USB_SPEED_SUPER_PLUS    5 // 10 Gbps
+#define USB_SPEED_FULL          1 /* 12 Mbps */
+#define USB_SPEED_LOW           2 /* 1.5 Mbps */
+#define USB_SPEED_HIGH          3 /* 480 Mbps */
+#define USB_SPEED_SUPER         4 /* 5 Gbps */
+#define USB_SPEED_SUPER_PLUS    5 /* 10 Gbps */
 
 /* USB Standard Request Types */
 #define USB_REQ_TYPE_STANDARD   (0x00 << 5)
@@ -105,7 +105,7 @@
 
 #define USB_MSC_PROTO_CBI_INT     0x00
 #define USB_MSC_PROTO_CBI_NO_INT  0x01
-#define USB_MSC_PROTO_BOT         0x50 // Bulk-Only Transport
+#define USB_MSC_PROTO_BOT         0x50 /* Bulk-Only Transport */
 
 /* Hub Class Requests & Features */
 #define USB_HUB_REQ_GET_STATUS     0x00
@@ -200,8 +200,8 @@ typedef struct usb_interface_descriptor usb_interface_descriptor_t;
 struct usb_endpoint_descriptor {
     uint8_t  bLength;
     uint8_t  bDescriptorType;
-    uint8_t  bEndpointAddress; // Bit 7: 1=IN, 0=OUT; Bits 0..3: EP number
-    uint8_t  bmAttributes;     // Bits 0..1: 00=Control, 01=Isoch, 10=Bulk, 11=Interrupt
+    uint8_t  bEndpointAddress; /* Bit 7: 1=IN, 0=OUT; Bits 0..3: EP number */
+    uint8_t  bmAttributes;     /* Bits 0..1: 00=Control, 01=Isoch, 10=Bulk, 11=Interrupt */
     uint16_t wMaxPacketSize;
     uint8_t  bInterval;
 } PACKED;

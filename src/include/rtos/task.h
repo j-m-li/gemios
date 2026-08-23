@@ -9,7 +9,7 @@
 #include "types.h"
 
 #define MAX_TASKS 32
-#define DEFAULT_STACK_SIZE 16384 // 16 KB
+#define DEFAULT_STACK_SIZE 16384 /* 16 KB */
 
 #define RTOS_PRIORITY_IDLE       0
 #define RTOS_PRIORITY_LOW        2
@@ -32,18 +32,18 @@ typedef enum {
 typedef void (*task_entry_fn)(void *arg);
 
 typedef struct task_control_block {
-    uint32_t *esp;              // Saved stack pointer (MUST BE FIRST MEMBER for asm)
-    uint32_t id;                // Unique task ID
-    char name[32];              // Task name
-    task_state_t state;         // Current task state
-    uint8_t priority;           // Task priority (0..15)
-    uint8_t base_priority;      // Base priority for priority inheritance
-    uint32_t sleep_ticks;       // Remaining ticks to sleep
-    uint32_t runtime_ticks;     // Total CPU time consumed in ticks
-    void *wait_object;          // Pointer to sync object task is waiting on
-    uint32_t *stack_base;       // Base address of allocated stack
-    uint32_t stack_size;        // Size of allocated stack
-    struct task_control_block *next_wait; // Next task in wait queue
+    uint32_t *esp;              /* Saved stack pointer (MUST BE FIRST MEMBER for asm) */
+    uint32_t id;                /* Unique task ID */
+    char name[32];              /* Task name */
+    task_state_t state;         /* Current task state */
+    uint8_t priority;           /* Task priority (0..15) */
+    uint8_t base_priority;      /* Base priority for priority inheritance */
+    uint32_t sleep_ticks;       /* Remaining ticks to sleep */
+    uint32_t runtime_ticks;     /* Total CPU time consumed in ticks */
+    void *wait_object;          /* Pointer to sync object task is waiting on */
+    uint32_t *stack_base;       /* Base address of allocated stack */
+    uint32_t stack_size;        /* Size of allocated stack */
+    struct task_control_block *next_wait; /* Next task in wait queue */
 } task_t;
 
 task_t *rtos_task_create(const char *name, task_entry_fn entry, void *arg, uint8_t priority, uint32_t stack_size);

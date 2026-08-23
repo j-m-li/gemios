@@ -16,7 +16,7 @@ static struct idt_entry idt[IDT_ENTRIES];
 static struct idt_ptr idtp;
 static isr_handler_t interrupt_handlers[IDT_ENTRIES];
 
-// Extern ISR functions from isr.S
+/* Extern ISR functions from isr.S */
 extern void isr0(void);
 extern void isr1(void);
 extern void isr2(void);
@@ -94,7 +94,7 @@ static const char *exception_messages[] = {
 
 uint32_t isr_handler(registers_t *regs) {
     if (regs->int_no < 32) {
-        // CPU Exception
+        /* CPU Exception */
         if (interrupt_handlers[regs->int_no]) {
             interrupt_handlers[regs->int_no](regs);
         } else {
@@ -106,7 +106,7 @@ uint32_t isr_handler(registers_t *regs) {
             for (;;) { hlt(); }
         }
     } else if (regs->int_no == 32) {
-        // PIT Timer IRQ0 - Preemptive Scheduler Tick
+        /* PIT Timer IRQ0 - Preemptive Scheduler Tick */
         pic_send_eoi(0);
         if (interrupt_handlers[32]) {
             interrupt_handlers[32](regs);
@@ -115,14 +115,14 @@ uint32_t isr_handler(registers_t *regs) {
             return (uint32_t)rtos_schedule_from_isr(regs);
         }
     } else if (regs->int_no >= 33 && regs->int_no < 48) {
-        // Hardware IRQ
+        /* Hardware IRQ */
         uint8_t irq = regs->int_no - 32;
         if (interrupt_handlers[regs->int_no]) {
             interrupt_handlers[regs->int_no](regs);
         }
         pic_send_eoi(irq);
     } else if (regs->int_no == 128) {
-        // Software Syscall / Yield (int 0x80)
+        /* Software Syscall / Yield (int 0x80) */
         if (rtos_is_running()) {
             return (uint32_t)rtos_schedule_from_isr(regs);
         }
@@ -142,7 +142,7 @@ void idt_init(void) {
     memset(&idt, 0, sizeof(struct idt_entry) * IDT_ENTRIES);
     memset(&interrupt_handlers, 0, sizeof(isr_handler_t) * IDT_ENTRIES);
 
-    // CPU Exceptions
+    /* CPU Exceptions */
     idt_set_gate(0, (uint32_t)isr0, KERNEL_CS, 0x8E);
     idt_set_gate(1, (uint32_t)isr1, KERNEL_CS, 0x8E);
     idt_set_gate(2, (uint32_t)isr2, KERNEL_CS, 0x8E);
@@ -176,7 +176,7 @@ void idt_init(void) {
     idt_set_gate(30, (uint32_t)isr30, KERNEL_CS, 0x8E);
     idt_set_gate(31, (uint32_t)isr31, KERNEL_CS, 0x8E);
 
-    // Hardware IRQs
+    /* Hardware IRQs */
     idt_set_gate(32, (uint32_t)irq0, KERNEL_CS, 0x8E);
     idt_set_gate(33, (uint32_t)irq1, KERNEL_CS, 0x8E);
     idt_set_gate(34, (uint32_t)irq2, KERNEL_CS, 0x8E);
@@ -194,8 +194,8 @@ void idt_init(void) {
     idt_set_gate(46, (uint32_t)irq14, KERNEL_CS, 0x8E);
     idt_set_gate(47, (uint32_t)irq15, KERNEL_CS, 0x8E);
 
-    // Preemptive Syscall / Yield 0x80
+    /* Preemptive Syscall / Yield 0x80 */
     idt_set_gate(128, (uint32_t)isr128, KERNEL_CS, 0xEE);
 
-    __asm__ volatile ("lidt %0" : : "m"(idtp));
+    load_idt(&idtp);
 }

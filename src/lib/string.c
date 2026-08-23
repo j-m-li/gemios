@@ -131,8 +131,10 @@ char *strncat(char *dest, const char *src, size_t n) {
 }
 
 char *strdup(const char *s) {
-    size_t len = strlen(s) + 1;
-    char *dup = (char*)kmalloc(len);
+    size_t len;
+    char *dup;
+    len = strlen(s) + 1;
+    dup = (char*)kmalloc(len);
     if (dup) {
         memcpy(dup, s, len);
     }

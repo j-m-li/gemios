@@ -43,16 +43,21 @@ static int hub_get_port_status(usb_device_t *dev, uint8_t port, uint32_t *status
 }
 
 int usb_hub_init_device(usb_device_t *dev) {
+    usb_hub_t *hub;
+    usb_hub_descriptor_t hub_desc;
+    int res;
+    uint8_t port;
+    xhci_controller_t *ctrl;
+
     if (hub_count >= MAX_HUBS) return -1;
 
-    usb_hub_t *hub = &hubs[hub_count++];
+    hub = &hubs[hub_count++];
     memset(hub, 0, sizeof(usb_hub_t));
     hub->dev = dev;
 
-    usb_hub_descriptor_t hub_desc;
     memset(&hub_desc, 0, sizeof(hub_desc));
 
-    int res = hub_get_descriptor(dev, &hub_desc);
+    res = hub_get_descriptor(dev, &hub_desc);
     if (res != 0) {
         kprint_color(0x4F, "[HUB] Failed to get Hub Descriptor on Slot %u (err %d)\n", dev->slot_id, res);
         return res;
@@ -66,35 +71,43 @@ int usb_hub_init_device(usb_device_t *dev) {
     kprintf("[HUB] Initialized USB Hub on Slot %u: %u downstream ports, PowerDelay=%ums\n",
             dev->slot_id, hub->num_ports, hub->pwr_on_delay_ms);
 
-    // Power on all downstream ports
-    for (uint8_t port = 1; port <= hub->num_ports; port++) {
+    /* Power on all downstream ports */
+    for (port = 1; port <= hub->num_ports; port++) {
         hub_set_port_feature(dev, port, USB_HUB_FEAT_PORT_POWER);
     }
 
-    // Wait for power stabilization
+    /* Wait for power stabilization */
     rtos_sleep_ms(hub->pwr_on_delay_ms + 50);
 
-    xhci_controller_t *ctrl = xhci_get_controller();
+    ctrl = xhci_get_controller();
 
-    // Check downstream ports
-    for (uint8_t port = 1; port <= hub->num_ports; port++) {
-        uint32_t port_status = 0;
+    /* Check downstream ports */
+    for (port = 1; port <= hub->num_ports; port++) {
+        uint32_t port_status;
+        uint16_t stat;
+
+        port_status = 0;
         res = hub_get_port_status(dev, port, &port_status);
         if (res != 0) continue;
 
-        uint16_t stat = (uint16_t)(port_status & 0xFFFF);
+        stat = (uint16_t)(port_status & 0xFFFF);
         if (stat & USB_HUB_PORT_STAT_CONNECTION) {
+            uint8_t speed;
+            uint32_t route_string;
+            uint32_t shift;
+            uint8_t child_slot;
+
             kprintf("[HUB] Slot %u Port %u: Connected device detected. Resetting port...\n", dev->slot_id, port);
 
-            // Issue Port Reset
+            /* Issue Port Reset */
             hub_set_port_feature(dev, port, USB_HUB_FEAT_PORT_RESET);
             rtos_sleep_ms(60);
 
-            // Read status again
+            /* Read status again */
             res = hub_get_port_status(dev, port, &port_status);
             stat = (uint16_t)(port_status & 0xFFFF);
 
-            uint8_t speed = USB_SPEED_FULL;
+            speed = USB_SPEED_FULL;
             if (stat & USB_HUB_PORT_STAT_LOW_SPEED) {
                 speed = USB_SPEED_LOW;
             } else if (stat & USB_HUB_PORT_STAT_HIGH_SPEED) {
@@ -104,14 +117,14 @@ int usb_hub_init_device(usb_device_t *dev) {
             kprintf("[HUB] Slot %u Port %u: Reset complete. Downstream Speed = %s (%u)\n",
                     dev->slot_id, port, usb_speed_to_string(speed), speed);
 
-            // Clear port change feature
+            /* Clear port change feature */
             hub_clear_port_feature(dev, port, USB_HUB_FEAT_C_PORT_RESET);
             hub_clear_port_feature(dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
 
-            // Calculate route string for downstream device
-            // xHCI Route String is 20 bits: 4 bits per hub level (up to 5 levels)
-            uint32_t route_string = dev->route_string;
-            uint32_t shift = 0;
+            /* Calculate route string for downstream device */
+            /* xHCI Route String is 20 bits: 4 bits per hub level (up to 5 levels) */
+            route_string = dev->route_string;
+            shift = 0;
             while (shift < 20 && ((route_string >> shift) & 0x0F) != 0) {
                 shift += 4;
             }
@@ -119,8 +132,8 @@ int usb_hub_init_device(usb_device_t *dev) {
                 route_string |= ((uint32_t)(port & 0x0F) << shift);
             }
 
-            // Enable slot for child device
-            uint8_t child_slot = 0;
+            /* Enable slot for child device */
+            child_slot = 0;
             if (xhci_cmd_enable_slot(ctrl, &child_slot) == 0 && child_slot > 0) {
                 kprintf("[HUB] Allocated Slot ID %u for device on Hub Slot %u Port %u (Route=0x%x)\n",
                         child_slot, dev->slot_id, port, route_string);
@@ -136,7 +149,7 @@ int usb_hub_init_device(usb_device_t *dev) {
 }
 
 void usb_hub_poll(void) {
-    // Background polling for hub port hot-plugging if needed
+    /* Background polling for hub port hot-plugging if needed */
 }
 
 size_t usb_hub_get_count(void) {

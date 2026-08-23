@@ -4,6 +4,7 @@ QEMU = qemu-system-i386
 
 CFLAGS = -g -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
          -fno-stack-protector -fno-builtin -nostdlib -Wall -Wextra \
+         -ansi -pedantic -Werror -Wno-long-long \
          -Wno-unused-parameter -Wno-unused-function -O0 \
          -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell
 
@@ -14,10 +15,12 @@ LDFLAGS = -m elf_i386 -T linker.ld --image-base=0x100000 -nostdlib
 BUILD_DIR = build
 
 C_SRCS = $(shell find src -name '*.c')
-ASM_SRCS = $(shell find src -name '*.S')
+ASM_CAP_SRCS = $(shell find src -name '*.S')
+ASM_LOW_SRCS = $(shell find src -name '*.s')
 
 OBJS = $(patsubst src/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
-       $(patsubst src/%.S, $(BUILD_DIR)/%.o, $(ASM_SRCS))
+       $(patsubst src/%.S, $(BUILD_DIR)/%.o, $(ASM_CAP_SRCS)) \
+       $(patsubst src/%.s, $(BUILD_DIR)/%.o, $(ASM_LOW_SRCS))
 
 KERNEL_ELF = $(BUILD_DIR)/gemios.elf
 DISK_IMG = $(BUILD_DIR)/test_disk.img
@@ -38,6 +41,11 @@ $(BUILD_DIR)/%.o: src/%.c
 	@echo "[CC] $<"
 
 $(BUILD_DIR)/%.o: src/%.S
+	@mkdir -p $(@D)
+	$(CC) $(ASFLAGS) -c $< -o $@
+	@echo "[AS] $<"
+
+$(BUILD_DIR)/%.o: src/%.s
 	@mkdir -p $(@D)
 	$(CC) $(ASFLAGS) -c $< -o $@
 	@echo "[AS] $<"

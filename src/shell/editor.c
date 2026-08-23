@@ -63,11 +63,16 @@ static int utf8_char_length(uint8_t first_byte) {
     if ((first_byte & 0xE0) == 0xC0) return 2;
     if ((first_byte & 0xF0) == 0xE0) return 3;
     if ((first_byte & 0xF8) == 0xF0) return 4;
-    return 1; // Fallback
+    return 1; /* Fallback */
 }
 
 int utf8_decode(const char *str, uint32_t *codepoint) {
-    uint8_t b0 = (uint8_t)str[0];
+    uint8_t b0;
+    uint8_t b1;
+    uint8_t b2;
+    uint8_t b3;
+
+    b0 = (uint8_t)str[0];
     if (b0 == 0) {
         if (codepoint) *codepoint = 0;
         return 0;
@@ -77,20 +82,20 @@ int utf8_decode(const char *str, uint32_t *codepoint) {
         if (codepoint) *codepoint = b0;
         return 1;
     } else if ((b0 & 0xE0) == 0xC0) {
-        uint8_t b1 = (uint8_t)str[1];
+        b1 = (uint8_t)str[1];
         if ((b1 & 0xC0) != 0x80) { if (codepoint) *codepoint = b0; return 1; }
         if (codepoint) *codepoint = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
         return 2;
     } else if ((b0 & 0xF0) == 0xE0) {
-        uint8_t b1 = (uint8_t)str[1];
-        uint8_t b2 = (uint8_t)str[2];
+        b1 = (uint8_t)str[1];
+        b2 = (uint8_t)str[2];
         if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) { if (codepoint) *codepoint = b0; return 1; }
         if (codepoint) *codepoint = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
         return 3;
     } else if ((b0 & 0xF8) == 0xF0) {
-        uint8_t b1 = (uint8_t)str[1];
-        uint8_t b2 = (uint8_t)str[2];
-        uint8_t b3 = (uint8_t)str[3];
+        b1 = (uint8_t)str[1];
+        b2 = (uint8_t)str[2];
+        b3 = (uint8_t)str[3];
         if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) { if (codepoint) *codepoint = b0; return 1; }
         if (codepoint) *codepoint = ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
         return 4;
@@ -271,22 +276,29 @@ static int utf8_prev_char(const char *line, int idx) {
 }
 
 static int utf8_next_char(const char *line, int idx) {
-    size_t len = strlen(line);
+    size_t len;
+    int c_len;
+
+    len = strlen(line);
     if ((size_t)idx >= len) return (int)len;
-    int c_len = utf8_char_length((uint8_t)line[idx]);
+    c_len = utf8_char_length((uint8_t)line[idx]);
     if (idx + c_len > (int)len) return (int)len;
     return idx + c_len;
 }
 
 static int utf8_byte_to_column(const char *line, int byte_idx) {
-    int col = 0;
-    int idx = 0;
+    int col;
+    int idx;
+
+    col = 0;
+    idx = 0;
     while (idx < byte_idx && line[idx] != '\0') {
         if (line[idx] == '\t') {
             col += 4 - (col % 4);
             idx++;
         } else {
-            int c_len = utf8_char_length((uint8_t)line[idx]);
+            int c_len;
+            c_len = utf8_char_length((uint8_t)line[idx]);
             col++;
             idx += c_len;
         }
@@ -306,6 +318,12 @@ static void set_status_msg(const char *msg, uint8_t color) {
 }
 
 static void editor_load_file(void) {
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    size_t file_buf_size;
+    char *buf;
+    size_t file_len;
+
     ed.num_lines = 0;
     ed.cur_row = 0;
     ed.cur_col = 0;
@@ -313,7 +331,7 @@ static void editor_load_file(void) {
     ed.left_col = 0;
     ed.modified = false;
 
-    block_dev_t *bdev = blockdev_get(ed.dev_name);
+    bdev = blockdev_get(ed.dev_name);
     if (!bdev) {
         set_status_msg("[ Device not found, starting new file ]", COLOR_MSG_ERR);
         strncpy(ed.lines[0], "", MAX_LINE_LEN);
@@ -321,7 +339,6 @@ static void editor_load_file(void) {
         return;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         set_status_msg("[ Filesystem error, starting new file ]", COLOR_MSG_ERR);
         strncpy(ed.lines[0], "", MAX_LINE_LEN);
@@ -329,24 +346,30 @@ static void editor_load_file(void) {
         return;
     }
 
-    size_t file_buf_size = 65536;
-    char *buf = (char*)kmalloc(file_buf_size);
+    file_buf_size = 65536;
+    buf = (char*)kmalloc(file_buf_size);
     if (!buf) {
         strncpy(ed.lines[0], "", MAX_LINE_LEN);
         ed.num_lines = 1;
         return;
     }
 
-    size_t file_len = 0;
+    file_len = 0;
     if (fat_read_file(&fs, ed.filename, buf, file_buf_size - 1, &file_len) == 0 && file_len > 0) {
+        char *p;
+        char msg_buf[64];
+
         buf[file_len] = '\0';
 
-        char *p = buf;
+        p = buf;
         while (*p && ed.num_lines < MAX_EDITOR_LINES) {
-            char *line_start = p;
+            char *line_start;
+            size_t len;
+
+            line_start = p;
             while (*p && *p != '\n' && *p != '\r') p++;
 
-            size_t len = p - line_start;
+            len = p - line_start;
             if (len >= MAX_LINE_LEN) len = MAX_LINE_LEN - 1;
 
             memcpy(ed.lines[ed.num_lines], line_start, len);
@@ -362,13 +385,12 @@ static void editor_load_file(void) {
             ed.num_lines = 1;
         }
 
-        char msg_buf[64];
         snprintf(msg_buf, sizeof(msg_buf), "[ Loaded %u bytes from %s ]", (uint32_t)file_len, ed.filename);
         set_status_msg(msg_buf, COLOR_MSG_OK);
     } else {
+        char msg_buf[64];
         strncpy(ed.lines[0], "", MAX_LINE_LEN);
         ed.num_lines = 1;
-        char msg_buf[64];
         snprintf(msg_buf, sizeof(msg_buf), "[ New file '%s' ]", ed.filename);
         set_status_msg(msg_buf, COLOR_MSG_OK);
     }
@@ -377,33 +399,41 @@ static void editor_load_file(void) {
 }
 
 static bool editor_save_file(void) {
-    block_dev_t *bdev = blockdev_get(ed.dev_name);
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    size_t total_alloc;
+    size_t i;
+    char *buf;
+    size_t out_pos;
+    char msg_buf[64];
+
+    bdev = blockdev_get(ed.dev_name);
     if (!bdev) {
         set_status_msg("[ Save failed: device not found ]", COLOR_MSG_ERR);
         return false;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         set_status_msg("[ Save failed: mount error ]", COLOR_MSG_ERR);
         return false;
     }
 
-    size_t total_alloc = 0;
-    for (size_t i = 0; i < ed.num_lines; i++) {
+    total_alloc = 0;
+    for (i = 0; i < ed.num_lines; i++) {
         total_alloc += strlen(ed.lines[i]) + 2;
     }
     if (total_alloc < 512) total_alloc = 512;
 
-    char *buf = (char*)kmalloc(total_alloc);
+    buf = (char*)kmalloc(total_alloc);
     if (!buf) {
         set_status_msg("[ Save failed: out of memory ]", COLOR_MSG_ERR);
         return false;
     }
 
-    size_t out_pos = 0;
-    for (size_t i = 0; i < ed.num_lines; i++) {
-        size_t len = strlen(ed.lines[i]);
+    out_pos = 0;
+    for (i = 0; i < ed.num_lines; i++) {
+        size_t len;
+        len = strlen(ed.lines[i]);
         memcpy(buf + out_pos, ed.lines[i], len);
         out_pos += len;
         if (i < ed.num_lines - 1) {
@@ -416,7 +446,6 @@ static bool editor_save_file(void) {
     if (fat_write_file(&fs, ed.filename, buf, out_pos) == 0) {
         serial_puts("[EDITOR] Saved successfully!\n");
         ed.modified = false;
-        char msg_buf[64];
         snprintf(msg_buf, sizeof(msg_buf), "[ Saved %u bytes to %s ]", (uint32_t)out_pos, ed.filename);
         set_status_msg(msg_buf, COLOR_MSG_OK);
         kfree(buf);
@@ -434,43 +463,60 @@ static bool editor_save_file(void) {
 /* ========================================================================= */
 
 static void editor_render(void) {
+    size_t x;
+    char title[64];
+    int r;
+    char stat[80];
+    int vis_col;
+    int cursor_vis_col;
+    int scr_x;
+    int scr_y;
+
     /* 1. Header Bar (Row 0) */
-    for (size_t x = 0; x < VGA_WIDTH; x++) {
+    for (x = 0; x < VGA_WIDTH; x++) {
         vga_putc_at(' ', COLOR_HEADER, x, 0);
     }
     vga_puts_at(" GEMIOS EDIT ", COLOR_HEADER, 1, 0);
     vga_putc_at(0xB3, COLOR_HEADER, 13, 0); /* │ */
 
-    char title[64];
     snprintf(title, sizeof(title), " File: %s:%s  (UTF-8) ", ed.dev_name, ed.filename);
     vga_puts_at(title, COLOR_HEADER, 15, 0);
 
     /* 2. Text Editing Area (Rows 1 to 22) */
-    for (int r = 0; r < VIEW_ROWS; r++) {
-        int line_idx = ed.top_row + r;
-        int screen_y = 1 + r;
+    for (r = 0; r < VIEW_ROWS; r++) {
+        int line_idx;
+        int screen_y;
 
-        // Clear row to DOS blue
-        for (size_t x = 0; x < VGA_WIDTH; x++) {
+        line_idx = ed.top_row + r;
+        screen_y = 1 + r;
+
+        /* Clear row to DOS blue */
+        for (x = 0; x < VGA_WIDTH; x++) {
             vga_putc_at(' ', COLOR_TEXT, x, screen_y);
         }
 
         if (line_idx < (int)ed.num_lines) {
-            // Draw Line Number in gutter
             char num_str[8];
+            const char *line;
+            int text_col;
+            size_t b_idx;
+            size_t line_bytes;
+
+            /* Draw Line Number in gutter */
             snprintf(num_str, sizeof(num_str), "%4d ", line_idx + 1);
             vga_puts_at(num_str, COLOR_GUTTER, 0, screen_y);
             vga_putc_at(0xB3, COLOR_GUTTER, 5, screen_y); /* Gutter divider │ */
 
-            // Render UTF-8 line content mapped to CP437
-            const char *line = ed.lines[line_idx];
-            int text_col = 0;
-            size_t b_idx = 0;
-            size_t line_bytes = strlen(line);
+            /* Render UTF-8 line content mapped to CP437 */
+            line = ed.lines[line_idx];
+            text_col = 0;
+            b_idx = 0;
+            line_bytes = strlen(line);
 
             while (b_idx < line_bytes && text_col < VGA_WIDTH - GUTTER_WIDTH + ed.left_col) {
                 if (line[b_idx] == '\t') {
-                    int next_tab = text_col + (4 - (text_col % 4));
+                    int next_tab;
+                    next_tab = text_col + (4 - (text_col % 4));
                     while (text_col < next_tab && text_col < VGA_WIDTH - GUTTER_WIDTH + ed.left_col) {
                         if (text_col >= ed.left_col) {
                             vga_putc_at(' ', COLOR_TEXT, GUTTER_WIDTH + (text_col - ed.left_col), screen_y);
@@ -479,12 +525,16 @@ static void editor_render(void) {
                     }
                     b_idx++;
                 } else {
-                    uint32_t cp = 0;
-                    int c_len = utf8_decode(&line[b_idx], &cp);
+                    uint32_t cp;
+                    int c_len;
+
+                    cp = 0;
+                    c_len = utf8_decode(&line[b_idx], &cp);
                     if (c_len <= 0) break;
 
                     if (text_col >= ed.left_col) {
-                        uint8_t glyph = utf8_to_cp437(cp);
+                        uint8_t glyph;
+                        glyph = utf8_to_cp437(cp);
                         vga_putc_at((char)glyph, COLOR_TEXT, GUTTER_WIDTH + (text_col - ed.left_col), screen_y);
                     }
                     text_col++;
@@ -492,29 +542,28 @@ static void editor_render(void) {
                 }
             }
         } else {
-            // Empty line below file EOF
+            /* Empty line below file EOF */
             vga_puts_at("   ~ ", COLOR_GUTTER, 0, screen_y);
             vga_putc_at(0xB3, COLOR_GUTTER, 5, screen_y);
         }
     }
 
     /* 3. Shortcut Bar (Row 23) */
-    for (size_t x = 0; x < VGA_WIDTH; x++) {
+    for (x = 0; x < VGA_WIDTH; x++) {
         vga_putc_at(' ', COLOR_STATUS, x, 23);
     }
     vga_puts_at(" ^S Save   ^Q Exit   ^N New   ^K DelLine   ESC Exit", COLOR_STATUS, 2, 23);
 
     /* 4. Status Bar (Row 24) */
-    for (size_t x = 0; x < VGA_WIDTH; x++) {
+    for (x = 0; x < VGA_WIDTH; x++) {
         vga_putc_at(' ', COLOR_STATUS, x, 24);
     }
 
-    // Message or Line Status
+    /* Message or Line Status */
     if (ed.msg[0] != '\0' && (pit_get_ticks() - ed.msg_time < 3000)) {
         vga_puts_at(ed.msg, ed.msg_color, 2, 24);
     } else {
-        char stat[80];
-        int vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
+        vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
         snprintf(stat, sizeof(stat), " Line: %d/%d  Col: %d   UTF-8",
                  ed.cur_row + 1, (int)ed.num_lines, vis_col + 1);
         vga_puts_at(stat, COLOR_STATUS, 2, 24);
@@ -527,9 +576,9 @@ static void editor_render(void) {
     }
 
     /* 5. Hardware Cursor Placement */
-    int cursor_vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
-    int scr_x = GUTTER_WIDTH + (cursor_vis_col - ed.left_col);
-    int scr_y = 1 + (ed.cur_row - ed.top_row);
+    cursor_vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
+    scr_x = GUTTER_WIDTH + (cursor_vis_col - ed.left_col);
+    scr_y = 1 + (ed.cur_row - ed.top_row);
 
     if (scr_x < GUTTER_WIDTH) scr_x = GUTTER_WIDTH;
     if (scr_x >= VGA_WIDTH) scr_x = VGA_WIDTH - 1;
@@ -540,14 +589,18 @@ static void editor_render(void) {
 }
 
 static void editor_adjust_view(void) {
+    size_t line_len;
+    int vis_col;
+    int view_width;
+
     if (ed.cur_row < 0) ed.cur_row = 0;
     if (ed.cur_row >= (int)ed.num_lines) ed.cur_row = (int)ed.num_lines - 1;
 
-    size_t line_len = strlen(ed.lines[ed.cur_row]);
+    line_len = strlen(ed.lines[ed.cur_row]);
     if (ed.cur_col < 0) ed.cur_col = 0;
     if (ed.cur_col > (int)line_len) ed.cur_col = (int)line_len;
 
-    // Adjust vertical scroll
+    /* Adjust vertical scroll */
     if (ed.cur_row < ed.top_row) {
         ed.top_row = ed.cur_row;
     }
@@ -555,9 +608,9 @@ static void editor_adjust_view(void) {
         ed.top_row = ed.cur_row - VIEW_ROWS + 1;
     }
 
-    // Adjust horizontal scroll
-    int vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
-    int view_width = VGA_WIDTH - GUTTER_WIDTH;
+    /* Adjust horizontal scroll */
+    vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
+    view_width = VGA_WIDTH - GUTTER_WIDTH;
 
     if (vis_col < ed.left_col) {
         ed.left_col = vis_col;
@@ -572,8 +625,11 @@ static void editor_adjust_view(void) {
 /* ========================================================================= */
 
 static void editor_insert_char(char c) {
-    char *line = ed.lines[ed.cur_row];
-    size_t len = strlen(line);
+    char *line;
+    size_t len;
+
+    line = ed.lines[ed.cur_row];
+    len = strlen(line);
     if (len >= MAX_LINE_LEN - 2) return;
 
     memmove(line + ed.cur_col + 1, line + ed.cur_col, len - ed.cur_col + 1);
@@ -583,16 +639,19 @@ static void editor_insert_char(char c) {
 }
 
 static void editor_insert_newline(void) {
+    char *cur;
+    size_t i;
+
     if (ed.num_lines >= MAX_EDITOR_LINES - 1) return;
 
-    char *cur = ed.lines[ed.cur_row];
+    cur = ed.lines[ed.cur_row];
 
-    // Shift lines down
-    for (size_t i = ed.num_lines; i > (size_t)ed.cur_row + 1; i--) {
+    /* Shift lines down */
+    for (i = ed.num_lines; i > (size_t)ed.cur_row + 1; i--) {
         strncpy(ed.lines[i], ed.lines[i - 1], MAX_LINE_LEN);
     }
 
-    // Split line
+    /* Split line */
     strncpy(ed.lines[ed.cur_row + 1], cur + ed.cur_col, MAX_LINE_LEN);
     cur[ed.cur_col] = '\0';
 
@@ -603,25 +662,35 @@ static void editor_insert_newline(void) {
 }
 
 static void editor_backspace(void) {
-    char *line = ed.lines[ed.cur_row];
+    char *line;
+
+    line = ed.lines[ed.cur_row];
 
     if (ed.cur_col > 0) {
-        int prev = utf8_prev_char(line, ed.cur_col);
-        size_t len = strlen(line);
+        int prev;
+        size_t len;
+
+        prev = utf8_prev_char(line, ed.cur_col);
+        len = strlen(line);
 
         memmove(line + prev, line + ed.cur_col, len - ed.cur_col + 1);
         ed.cur_col = prev;
         ed.modified = true;
     } else if (ed.cur_row > 0) {
-        // Merge with previous line
-        char *prev_line = ed.lines[ed.cur_row - 1];
-        size_t prev_len = strlen(prev_line);
-        size_t cur_len = strlen(line);
+        /* Merge with previous line */
+        char *prev_line;
+        size_t prev_len;
+        size_t cur_len;
+
+        prev_line = ed.lines[ed.cur_row - 1];
+        prev_len = strlen(prev_line);
+        cur_len = strlen(line);
 
         if (prev_len + cur_len < MAX_LINE_LEN) {
+            size_t i;
             strcat(prev_line, line);
 
-            for (size_t i = ed.cur_row; i < ed.num_lines - 1; i++) {
+            for (i = ed.cur_row; i < ed.num_lines - 1; i++) {
                 strncpy(ed.lines[i], ed.lines[i + 1], MAX_LINE_LEN);
             }
             ed.num_lines--;
@@ -633,22 +702,30 @@ static void editor_backspace(void) {
 }
 
 static void editor_delete(void) {
-    char *line = ed.lines[ed.cur_row];
-    size_t len = strlen(line);
+    char *line;
+    size_t len;
+
+    line = ed.lines[ed.cur_row];
+    len = strlen(line);
 
     if (ed.cur_col < (int)len) {
-        int next = utf8_next_char(line, ed.cur_col);
+        int next;
+        next = utf8_next_char(line, ed.cur_col);
         memmove(line + ed.cur_col, line + next, len - next + 1);
         ed.modified = true;
     } else if (ed.cur_row < (int)ed.num_lines - 1) {
-        // Merge next line into current line
-        char *next_line = ed.lines[ed.cur_row + 1];
-        size_t next_len = strlen(next_line);
+        /* Merge next line into current line */
+        char *next_line;
+        size_t next_len;
+
+        next_line = ed.lines[ed.cur_row + 1];
+        next_len = strlen(next_line);
 
         if (len + next_len < MAX_LINE_LEN) {
+            size_t i;
             strcat(line, next_line);
 
-            for (size_t i = ed.cur_row + 1; i < ed.num_lines - 1; i++) {
+            for (i = ed.cur_row + 1; i < ed.num_lines - 1; i++) {
                 strncpy(ed.lines[i], ed.lines[i + 1], MAX_LINE_LEN);
             }
             ed.num_lines--;
@@ -658,6 +735,8 @@ static void editor_delete(void) {
 }
 
 static void editor_delete_line(void) {
+    size_t i;
+
     if (ed.num_lines <= 1) {
         ed.lines[0][0] = '\0';
         ed.cur_row = 0;
@@ -666,7 +745,7 @@ static void editor_delete_line(void) {
         return;
     }
 
-    for (size_t i = ed.cur_row; i < ed.num_lines - 1; i++) {
+    for (i = ed.cur_row; i < ed.num_lines - 1; i++) {
         strncpy(ed.lines[i], ed.lines[i + 1], MAX_LINE_LEN);
     }
     ed.num_lines--;
@@ -691,11 +770,14 @@ static int editor_get_char(void) {
         return (int)usb_kbd_getchar();
     }
     if (serial_has_char()) {
-        uint8_t c = (uint8_t)serial_getchar();
-        if (c == 27) { // ESC or ANSI escape sequence
-            int c2 = get_serial_byte_timed(500000);
+        uint8_t c;
+        c = (uint8_t)serial_getchar();
+        if (c == 27) { /* ESC or ANSI escape sequence */
+            int c2;
+            c2 = get_serial_byte_timed(500000);
             if (c2 == '[') {
-                int c3 = get_serial_byte_timed(500000);
+                int c3;
+                c3 = get_serial_byte_timed(500000);
                 if (c3 == 'A') return KEY_UP;
                 if (c3 == 'B') return KEY_DOWN;
                 if (c3 == 'C') return KEY_RIGHT;
@@ -703,7 +785,8 @@ static int editor_get_char(void) {
                 if (c3 == 'H') return KEY_HOME;
                 if (c3 == 'F') return KEY_END;
                 if (c3 == '1') {
-                    int c4 = get_serial_byte_timed(500000);
+                    int c4;
+                    c4 = get_serial_byte_timed(500000);
                     if (c4 == '~') return KEY_HOME;
                     if (c4 == '1') { get_serial_byte_timed(500000); return KEY_F1; }
                     if (c4 == '2') { get_serial_byte_timed(500000); return KEY_F2; }
@@ -714,7 +797,8 @@ static int editor_get_char(void) {
                 if (c3 == '5') { get_serial_byte_timed(500000); return KEY_PGUP; }
                 if (c3 == '6') { get_serial_byte_timed(500000); return KEY_PGDN; }
             } else if (c2 == 'O') {
-                int c3 = get_serial_byte_timed(500000);
+                int c3;
+                c3 = get_serial_byte_timed(500000);
                 if (c3 == 'P') return KEY_F1;
                 if (c3 == 'Q') return KEY_F2;
                 if (c3 == 'R') return KEY_F3;
@@ -728,6 +812,8 @@ static int editor_get_char(void) {
 }
 
 void editor_open(const char *dev_name, const char *filename) {
+    bool needs_redraw;
+
     memset(&ed, 0, sizeof(ed));
     strncpy(ed.dev_name, (dev_name && dev_name[0]) ? dev_name : "usb0", sizeof(ed.dev_name) - 1);
     strncpy(ed.filename, (filename && filename[0]) ? filename : "UNTITLED.TXT", sizeof(ed.filename) - 1);
@@ -735,9 +821,11 @@ void editor_open(const char *dev_name, const char *filename) {
 
     editor_load_file();
     serial_puts("[EDITOR] Ready\n");
-    bool needs_redraw = true;
+    needs_redraw = true;
 
     while (ed.running) {
+        int c;
+
         xhci_poll();
 
         if (needs_redraw) {
@@ -746,7 +834,7 @@ void editor_open(const char *dev_name, const char *filename) {
             needs_redraw = false;
         }
 
-        int c = editor_get_char();
+        c = editor_get_char();
         if (c == 0) {
             rtos_sleep_ms(10);
             continue;
@@ -763,13 +851,15 @@ void editor_open(const char *dev_name, const char *filename) {
             case KEY_CTRL_X:
             case KEY_ESC:
                 if (ed.modified) {
+                    bool deciding;
                     set_status_msg("[ Save changes before exit? (Y/N/Esc) ]", COLOR_MSG_ERR);
                     editor_render();
 
-                    bool deciding = true;
+                    deciding = true;
                     while (deciding) {
+                        int opt;
                         xhci_poll();
-                        int opt = editor_get_char();
+                        opt = editor_get_char();
                         if (opt == 'y' || opt == 'Y' || opt == '\r' || opt == '\n') {
                             editor_save_file();
                             ed.running = false;
@@ -852,14 +942,16 @@ void editor_open(const char *dev_name, const char *filename) {
                 editor_insert_newline();
                 break;
 
-            case '\t':
-                for (int t = 0; t < 4; t++) {
+            case '\t': {
+                int t;
+                for (t = 0; t < 4; t++) {
                     editor_insert_char(' ');
                 }
                 break;
+            }
 
             default:
-                // Printable characters (ASCII & UTF-8 bytes 0x80..0xFF)
+                /* Printable characters (ASCII & UTF-8 bytes 0x80..0xFF) */
                 if (c >= 32 && c <= 255) {
                     editor_insert_char((char)(uint8_t)c);
                 }
@@ -869,7 +961,7 @@ void editor_open(const char *dev_name, const char *filename) {
 
     serial_puts("[EDITOR] Exited editor\n");
 
-    // Clear screen and restore terminal on exit
+    /* Clear screen and restore terminal on exit */
     vga_clear();
     vga_set_color(0x07);
     vga_draw_status_bar();

@@ -73,14 +73,16 @@ static const char ps2_ascii_shift[128] = {
 };
 
 static void ps2_wait_write(void) {
-    int timeout = 50000;
+    int timeout;
+    timeout = 50000;
     while ((inb(PS2_STATUS_PORT) & 0x02) && --timeout) {
         io_wait();
     }
 }
 
 static void ps2_wait_read(void) {
-    int timeout = 50000;
+    int timeout;
+    timeout = 50000;
     while (!(inb(PS2_STATUS_PORT) & 0x01) && --timeout) {
         io_wait();
     }
@@ -92,22 +94,26 @@ static bool caps_lock = false;
 static bool extended_code = false;
 
 static void ps2_keyboard_irq_handler(registers_t *regs) {
+    uint8_t scancode;
+    bool released;
+    uint8_t key;
+
     UNUSED(regs);
 
-    uint8_t scancode = inb(PS2_DATA_PORT);
+    scancode = inb(PS2_DATA_PORT);
 
     if (scancode == 0xE0) {
         extended_code = true;
         return;
     }
 
-    bool released = (scancode & 0x80) != 0;
-    uint8_t key = scancode & 0x7F;
+    released = (scancode & 0x80) != 0;
+    key = scancode & 0x7F;
 
     if (extended_code) {
         extended_code = false;
         if (key == 0x1D) {
-            // Right Ctrl
+            /* Right Ctrl */
             ctrl_pressed = !released;
             return;
         }
@@ -126,19 +132,19 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
     }
 
     if (key == 0x1D) {
-        // Left Ctrl
+        /* Left Ctrl */
         ctrl_pressed = !released;
         return;
     }
 
     if (key == 0x2A || key == 0x36) {
-        // Left Shift or Right Shift
+        /* Left Shift or Right Shift */
         shift_pressed = !released;
         return;
     }
 
     if (key == 0x3A && !released) {
-        // Caps Lock toggle
+        /* Caps Lock toggle */
         caps_lock = !caps_lock;
         return;
     }
@@ -150,8 +156,11 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
         if (key == 0x01) { kbd_push_char(KEY_ESC); return; }
 
         if (key < 128) {
-            bool use_shift = shift_pressed;
-            char c = use_shift ? ps2_ascii_shift[key] : ps2_ascii_normal[key];
+            bool use_shift;
+            char c;
+
+            use_shift = shift_pressed;
+            c = use_shift ? ps2_ascii_shift[key] : ps2_ascii_normal[key];
 
             if (ctrl_pressed && c != 0) {
                 if (c >= 'a' && c <= 'z') {
@@ -177,22 +186,24 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
 }
 
 void ps2_kbd_init(void) {
+    uint8_t config;
+
     shift_pressed = false;
     caps_lock = false;
     extended_code = false;
 
-    // 1. Flush any pending data in PS/2 buffer
+    /* 1. Flush any pending data in PS/2 buffer */
     while (inb(PS2_STATUS_PORT) & 0x01) {
         inb(PS2_DATA_PORT);
     }
 
-    // 2. Read Controller Configuration Byte
+    /* 2. Read Controller Configuration Byte */
     ps2_wait_write();
     outb(PS2_COMMAND_PORT, 0x20);
     ps2_wait_read();
-    uint8_t config = inb(PS2_DATA_PORT);
+    config = inb(PS2_DATA_PORT);
 
-    // 3. Enable IRQ1 (bit 0), enable translation (bit 6), enable clock (clear bit 4)
+    /* 3. Enable IRQ1 (bit 0), enable translation (bit 6), enable clock (clear bit 4) */
     config |= (1 << 0);
     config &= ~(1 << 4);
     config |= (1 << 6);
@@ -202,19 +213,19 @@ void ps2_kbd_init(void) {
     ps2_wait_write();
     outb(PS2_DATA_PORT, config);
 
-    // 4. Enable First PS/2 Port
+    /* 4. Enable First PS/2 Port */
     ps2_wait_write();
     outb(PS2_COMMAND_PORT, 0xAE);
 
-    // 5. Register IRQ1 handler (Vector 33) and unmask IRQ1 in PIC
+    /* 5. Register IRQ1 handler (Vector 33) and unmask IRQ1 in PIC */
     register_interrupt_handler(33, ps2_keyboard_irq_handler);
     pic_unmask_irq(1);
 
-    // 6. Enable Keyboard Scanning command (0xF4)
+    /* 6. Enable Keyboard Scanning command (0xF4) */
     ps2_wait_write();
     outb(PS2_DATA_PORT, 0xF4);
     ps2_wait_read();
-    inb(PS2_DATA_PORT); // Read ACK
+    inb(PS2_DATA_PORT); /* Read ACK */
 
     kprintf("[PS/2] Initialized PS/2 Keyboard Driver (IRQ1 Enabled)\n");
 }

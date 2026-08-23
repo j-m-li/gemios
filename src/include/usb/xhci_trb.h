@@ -73,14 +73,14 @@
 /* TRB Flags */
 #define TRB_CYCLE                      (1U << 0)
 #define TRB_ENT                        (1U << 1)
-#define TRB_TC                         (1U << 1) // For Link TRB: Toggle Cycle
+#define TRB_TC                         (1U << 1) /* For Link TRB: Toggle Cycle */
 #define TRB_ISP                        (1U << 2)
 #define TRB_NS                         (1U << 3)
 #define TRB_CH                         (1U << 4)
 #define TRB_IOC                        (1U << 5)
 #define TRB_IDT                        (1U << 6)
-#define TRB_BSR                        (1U << 9) // Block Set Address Request
-#define TRB_DC                         (1U << 9) // Deconfigure (for Configure EP)
+#define TRB_BSR                        (1U << 9) /* Block Set Address Request */
+#define TRB_DC                         (1U << 9) /* Deconfigure (for Configure EP) */
 
 #define TRB_GET_TYPE(c)                (((c) >> 10) & 0x3F)
 #define TRB_SET_TYPE(t)                (((uint32_t)(t) & 0x3F) << 10)
@@ -115,20 +115,20 @@ typedef struct xhci_erst_entry xhci_erst_entry_t;
 
 /* Slot Context (32 bytes) */
 struct xhci_slot_ctx {
-    uint32_t info1; // [0:19] Route String, [20:23] Speed, [24] Rsvd, [25] MTT, [26] Hub, [27:31] Context Entries
-    uint32_t info2; // [0:7] Max Exit Latency, [8:15] Root Hub Port Num, [16:23] Number of Ports, [24:31] Rsvd
-    uint32_t info3; // [0:7] Parent Hub Slot ID, [8:15] Parent Port Num, [16:17] TTT, [18:31] Rsvd/Interrupter Target
-    uint32_t info4; // [0:7] Device Address, [8:26] Rsvd, [27:31] Slot State
+    uint32_t info1; /* [0:19] Route String, [20:23] Speed, [24] Rsvd, [25] MTT, [26] Hub, [27:31] Context Entries */
+    uint32_t info2; /* [0:7] Max Exit Latency, [8:15] Root Hub Port Num, [16:23] Number of Ports, [24:31] Rsvd */
+    uint32_t info3; /* [0:7] Parent Hub Slot ID, [8:15] Parent Port Num, [16:17] TTT, [18:31] Rsvd/Interrupter Target */
+    uint32_t info4; /* [0:7] Device Address, [8:26] Rsvd, [27:31] Slot State */
     uint32_t rsvd[4];
 } PACKED;
 typedef struct xhci_slot_ctx xhci_slot_ctx_t;
 
 /* Endpoint Context (32 bytes) */
 struct xhci_ep_ctx {
-    uint32_t info1; // [0:2] EP State, [3:7] Rsvd, [8:9] Mult, [10:14] MaxPStreams, [15] LSA, [16:23] Interval, [24:31] Max ESIT Payload Hi
-    uint32_t info2; // [0] Force Event, [1:2] CErr, [3:5] EP Type, [6] Rsvd, [7] HID, [8:15] Max Burst Size, [16:31] Max Packet Size
-    uint64_t tr_dequeue_ptr; // [0] DCS, [1:3] Rsvd, [4:63] TR Dequeue Pointer
-    uint32_t tx_info; // [0:15] Average TRB Length, [16:31] Max ESIT Payload Lo
+    uint32_t info1; /* [0:2] EP State, [3:7] Rsvd, [8:9] Mult, [10:14] MaxPStreams, [15] LSA, [16:23] Interval, [24:31] Max ESIT Payload Hi */
+    uint32_t info2; /* [0] Force Event, [1:2] CErr, [3:5] EP Type, [6] Rsvd, [7] HID, [8:15] Max Burst Size, [16:31] Max Packet Size */
+    uint64_t tr_dequeue_ptr; /* [0] DCS, [1:3] Rsvd, [4:63] TR Dequeue Pointer */
+    uint32_t tx_info; /* [0:15] Average TRB Length, [16:31] Max ESIT Payload Lo */
     uint32_t rsvd[3];
 } PACKED;
 typedef struct xhci_ep_ctx xhci_ep_ctx_t;

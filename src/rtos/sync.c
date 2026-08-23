@@ -30,8 +30,9 @@ static void add_waiter(task_t **head, task_t **tail, task_t *task) {
 }
 
 static task_t *pop_waiter(task_t **head, task_t **tail) {
+    task_t *task;
     if (!*head) return NULL;
-    task_t *task = *head;
+    task = *head;
     *head = task->next_wait;
     if (!*head) {
         *tail = NULL;
@@ -41,7 +42,10 @@ static task_t *pop_waiter(task_t **head, task_t **tail) {
 }
 
 bool rtos_sem_wait(rtos_sem_t *sem, uint32_t timeout_ms) {
-    uint32_t flags = irq_save();
+    uint32_t flags;
+    task_t *cur;
+
+    flags = irq_save();
 
     if (sem->count > 0) {
         sem->count--;
@@ -54,7 +58,7 @@ bool rtos_sem_wait(rtos_sem_t *sem, uint32_t timeout_ms) {
         return false;
     }
 
-    task_t *cur = rtos_current_task();
+    cur = rtos_current_task();
     if (!cur) {
         irq_restore(flags);
         return false;
@@ -68,9 +72,12 @@ bool rtos_sem_wait(rtos_sem_t *sem, uint32_t timeout_ms) {
 }
 
 void rtos_sem_signal(rtos_sem_t *sem) {
-    uint32_t flags = irq_save();
+    uint32_t flags;
+    task_t *waiter;
 
-    task_t *waiter = pop_waiter(&sem->wait_head, &sem->wait_tail);
+    flags = irq_save();
+
+    waiter = pop_waiter(&sem->wait_head, &sem->wait_tail);
     if (waiter) {
         rtos_task_unblock(waiter);
     } else {
@@ -92,11 +99,14 @@ void rtos_mutex_init(rtos_mutex_t *mutex) {
 }
 
 bool rtos_mutex_lock(rtos_mutex_t *mutex, uint32_t timeout_ms) {
+    uint32_t flags;
+    task_t *cur;
+
     if (!rtos_is_running()) {
         return true;
     }
-    uint32_t flags = irq_save();
-    task_t *cur = rtos_current_task();
+    flags = irq_save();
+    cur = rtos_current_task();
 
     if (!mutex->locked) {
         mutex->locked = true;
@@ -107,7 +117,7 @@ bool rtos_mutex_lock(rtos_mutex_t *mutex, uint32_t timeout_ms) {
     }
 
     if (cur != NULL && mutex->owner == cur) {
-        // Recursive lock (allow)
+        /* Recursive lock (allow) */
         mutex->recursion_count++;
         irq_restore(flags);
         return true;
@@ -118,7 +128,7 @@ bool rtos_mutex_lock(rtos_mutex_t *mutex, uint32_t timeout_ms) {
         return false;
     }
 
-    // Priority inheritance: boost owner priority if waiter has higher priority
+    /* Priority inheritance: boost owner priority if waiter has higher priority */
     if (cur && mutex->owner && cur->priority > mutex->owner->priority) {
         mutex->owner->priority = cur->priority;
     }
@@ -133,11 +143,15 @@ bool rtos_mutex_lock(rtos_mutex_t *mutex, uint32_t timeout_ms) {
 }
 
 void rtos_mutex_unlock(rtos_mutex_t *mutex) {
+    uint32_t flags;
+    task_t *cur;
+    task_t *waiter;
+
     if (!rtos_is_running()) {
         return;
     }
-    uint32_t flags = irq_save();
-    task_t *cur = rtos_current_task();
+    flags = irq_save();
+    cur = rtos_current_task();
 
     if (!mutex->locked || (cur != NULL && mutex->owner != cur)) {
         irq_restore(flags);
@@ -150,12 +164,12 @@ void rtos_mutex_unlock(rtos_mutex_t *mutex) {
         return;
     }
 
-    // Restore owner base priority
+    /* Restore owner base priority */
     if (mutex->owner) {
         mutex->owner->priority = mutex->owner->base_priority;
     }
 
-    task_t *waiter = pop_waiter(&mutex->wait_head, &mutex->wait_tail);
+    waiter = pop_waiter(&mutex->wait_head, &mutex->wait_tail);
     if (waiter) {
         mutex->owner = waiter;
         mutex->recursion_count = 1;
@@ -171,7 +185,9 @@ void rtos_mutex_unlock(rtos_mutex_t *mutex) {
 
 /* Message Queue Implementation */
 rtos_queue_t *rtos_queue_create(size_t item_size, size_t capacity) {
-    rtos_queue_t *q = (rtos_queue_t*)kmalloc(sizeof(rtos_queue_t));
+    rtos_queue_t *q;
+
+    q = (rtos_queue_t*)kmalloc(sizeof(rtos_queue_t));
     if (!q) return NULL;
 
     q->buffer = (uint8_t*)kmalloc(item_size * capacity);
@@ -249,8 +265,11 @@ void rtos_event_init(rtos_event_t *ev) {
 }
 
 uint32_t rtos_event_wait(rtos_event_t *ev, uint32_t mask, bool clear_on_exit, uint32_t timeout_ms) {
+    uint32_t flags;
+    uint32_t res;
+
     UNUSED(timeout_ms);
-    uint32_t flags = irq_save();
+    flags = irq_save();
 
     while ((ev->flags & mask) == 0) {
         task_t *cur = rtos_current_task();
@@ -262,7 +281,7 @@ uint32_t rtos_event_wait(rtos_event_t *ev, uint32_t mask, bool clear_on_exit, ui
         flags = irq_save();
     }
 
-    uint32_t res = ev->flags & mask;
+    res = ev->flags & mask;
     if (clear_on_exit) {
         ev->flags &= ~mask;
     }
@@ -272,11 +291,15 @@ uint32_t rtos_event_wait(rtos_event_t *ev, uint32_t mask, bool clear_on_exit, ui
 }
 
 void rtos_event_set(rtos_event_t *ev, uint32_t mask) {
-    uint32_t flags = irq_save();
+    uint32_t flags;
+    size_t count;
+    size_t i;
+
+    flags = irq_save();
     ev->flags |= mask;
 
-    size_t count = rtos_get_task_count();
-    for (size_t i = 0; i < count; i++) {
+    count = rtos_get_task_count();
+    for (i = 0; i < count; i++) {
         task_t *t = rtos_get_task_by_index(i);
         if (t && t->state == TASK_STATE_BLOCKED && t->wait_object == ev) {
             t->state = TASK_STATE_READY;
@@ -289,7 +312,8 @@ void rtos_event_set(rtos_event_t *ev, uint32_t mask) {
 }
 
 void rtos_event_clear(rtos_event_t *ev, uint32_t mask) {
-    uint32_t flags = irq_save();
+    uint32_t flags;
+    flags = irq_save();
     ev->flags &= ~mask;
     irq_restore(flags);
 }

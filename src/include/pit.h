@@ -8,7 +8,7 @@
 
 #include "types.h"
 
-#define PIT_FREQUENCY 1000 // 1000 Hz = 1ms tick
+#define PIT_FREQUENCY 1000 /* 1000 Hz = 1ms tick */
 
 void pit_init(uint32_t frequency);
 uint32_t pit_get_ticks(void);

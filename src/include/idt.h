@@ -23,10 +23,10 @@ struct idt_ptr {
 
 /* Ring 0 Interrupt Stack Frame (56 bytes total) */
 struct registers {
-    uint32_t ds;                                           // Pushed by isr_common_stub (4B)
-    uint32_t edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax; // Pushed by pusha (32B)
-    uint32_t int_no, err_code;                             // Pushed by ISR/IRQ stub (8B)
-    uint32_t eip, cs, eflags;                              // Pushed automatically by CPU on interrupt (12B)
+    uint32_t ds;                                           /* Pushed by isr_common_stub (4B) */
+    uint32_t edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax; /* Pushed by pusha (32B) */
+    uint32_t int_no, err_code;                             /* Pushed by ISR/IRQ stub (8B) */
+    uint32_t eip, cs, eflags;                              /* Pushed automatically by CPU on interrupt (12B) */
 };
 
 typedef struct registers registers_t;

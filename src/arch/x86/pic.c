@@ -11,34 +11,34 @@
 #define ICW4_8086 0x01
 
 void pic_init(void) {
-    // ICW1: Start initialization in cascade mode
+    /* ICW1: Start initialization in cascade mode */
     outb(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);
     io_wait();
     outb(PIC2_COMMAND, ICW1_INIT | ICW1_ICW4);
     io_wait();
 
-    // ICW2: Master PIC vector offset (0x20 = 32), Slave PIC offset (0x28 = 40)
+    /* ICW2: Master PIC vector offset (0x20 = 32), Slave PIC offset (0x28 = 40) */
     outb(PIC1_DATA, 0x20);
     io_wait();
     outb(PIC2_DATA, 0x28);
     io_wait();
 
-    // ICW3: Tell Master PIC there is a slave at IRQ2 (0000 0100 = 4)
+    /* ICW3: Tell Master PIC there is a slave at IRQ2 (0000 0100 = 4) */
     outb(PIC1_DATA, 4);
     io_wait();
-    // Tell Slave PIC its cascade identity (2)
+    /* Tell Slave PIC its cascade identity (2) */
     outb(PIC2_DATA, 2);
     io_wait();
 
-    // ICW4: 8086/88 mode
+    /* ICW4: 8086/88 mode */
     outb(PIC1_DATA, ICW4_8086);
     io_wait();
     outb(PIC2_DATA, ICW4_8086);
     io_wait();
 
-    // Set default masks (Enable IRQ 0, 1, 2 cascade)
-    outb(PIC1_DATA, 0xF8); // IRQ 0, 1, 2 unmasked
-    outb(PIC2_DATA, 0xFF); // All slave IRQs masked initially
+    /* Set default masks (Enable IRQ 0, 1, 2 cascade) */
+    outb(PIC1_DATA, 0xF8); /* IRQ 0, 1, 2 unmasked */
+    outb(PIC2_DATA, 0xFF); /* All slave IRQs masked initially */
 }
 
 void pic_send_eoi(uint8_t irq) {

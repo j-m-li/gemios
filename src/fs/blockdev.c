@@ -25,9 +25,12 @@ int blockdev_register(block_dev_t *bdev) {
 }
 
 void blockdev_unregister(block_dev_t *bdev) {
-    for (size_t i = 0; i < bdev_count; i++) {
+    size_t i;
+    size_t j;
+
+    for (i = 0; i < bdev_count; i++) {
         if (registered_bdevs[i] == bdev) {
-            for (size_t j = i; j < bdev_count - 1; j++) {
+            for (j = i; j < bdev_count - 1; j++) {
                 registered_bdevs[j] = registered_bdevs[j + 1];
             }
             bdev_count--;
@@ -37,7 +40,8 @@ void blockdev_unregister(block_dev_t *bdev) {
 }
 
 block_dev_t *blockdev_get(const char *name) {
-    for (size_t i = 0; i < bdev_count; i++) {
+    size_t i;
+    for (i = 0; i < bdev_count; i++) {
         if (strcmp(registered_bdevs[i]->name, name) == 0) {
             return registered_bdevs[i];
         }

@@ -32,19 +32,19 @@ static const uint16_t hid_scancode_unmodified[128] = {
     '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
     '\n', 27, '\b', '\t', ' ', '-', '=', '[', ']', '\\',
     '#', ';', '\'', '`', ',', '.', '/',
-    0, // Caps lock
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // F1..F12
-    0, 0, 0, // PrintScreen, ScrollLock, Pause
-    0, // Insert
-    KEY_HOME, // 0x4A Home
-    0, // PageUp
-    KEY_DELETE, // 0x4C Delete
-    KEY_END, // 0x4D End
-    0, // PageDown
-    KEY_RIGHT, // 0x4F Right Arrow
-    KEY_LEFT,  // 0x50 Left Arrow
-    KEY_DOWN,  // 0x51 Down Arrow
-    KEY_UP,    // 0x52 Up Arrow
+    0, /* Caps lock */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* F1..F12 */
+    0, 0, 0, /* PrintScreen, ScrollLock, Pause */
+    0, /* Insert */
+    KEY_HOME, /* 0x4A Home */
+    0, /* PageUp */
+    KEY_DELETE, /* 0x4C Delete */
+    KEY_END, /* 0x4D End */
+    0, /* PageDown */
+    KEY_RIGHT, /* 0x4F Right Arrow */
+    KEY_LEFT,  /* 0x50 Left Arrow */
+    KEY_DOWN,  /* 0x51 Down Arrow */
+    KEY_UP     /* 0x52 Up Arrow */
 };
 
 static const uint16_t hid_scancode_shift[128] = {
@@ -54,7 +54,7 @@ static const uint16_t hid_scancode_shift[128] = {
     '!', '@', '#', '$', '%', '^', '&', '*', '(', ')',
     '\n', 27, '\b', '\t', ' ', '_', '+', '{', '}', '|',
     '~', ':', '"', '~', '<', '>', '?',
-    0, // Caps lock
+    0, /* Caps lock */
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0,
     0,
@@ -66,12 +66,15 @@ static const uint16_t hid_scancode_shift[128] = {
     KEY_RIGHT,
     KEY_LEFT,
     KEY_DOWN,
-    KEY_UP,
+    KEY_UP
 };
 
 void kbd_push_char(uint16_t key) {
-    uint32_t flags = irq_save();
-    size_t next = (kbd_head + 1) % KBD_BUF_SIZE;
+    uint32_t flags;
+    size_t next;
+
+    flags = irq_save();
+    next = (kbd_head + 1) % KBD_BUF_SIZE;
     if (next != kbd_tail) {
         kbd_buffer[kbd_head] = key;
         kbd_head = next;
@@ -84,27 +87,38 @@ bool usb_kbd_has_char(void) {
 }
 
 uint16_t usb_kbd_getchar(void) {
-    uint32_t flags = irq_save();
+    uint32_t flags;
+    uint16_t c;
+
+    flags = irq_save();
     if (kbd_head == kbd_tail) {
         irq_restore(flags);
         return 0;
     }
-    uint16_t c = kbd_buffer[kbd_tail];
+    c = kbd_buffer[kbd_tail];
     kbd_tail = (kbd_tail + 1) % KBD_BUF_SIZE;
     irq_restore(flags);
     return c;
 }
 
 static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
-    bool shift = (report->modifiers & 0x22) != 0; // Left or Right Shift
-    bool ctrl  = (report->modifiers & 0x11) != 0; // Left or Right Ctrl
+    bool shift;
+    bool ctrl;
+    int i;
 
-    for (int i = 0; i < 6; i++) {
-        uint8_t key = report->keycodes[i];
+    shift = (report->modifiers & 0x22) != 0; /* Left or Right Shift */
+    ctrl  = (report->modifiers & 0x11) != 0; /* Left or Right Ctrl */
+
+    for (i = 0; i < 6; i++) {
+        uint8_t key;
+        bool is_new;
+        int j;
+
+        key = report->keycodes[i];
         if (key == 0) continue;
 
-        bool is_new = true;
-        for (int j = 0; j < 6; j++) {
+        is_new = true;
+        for (j = 0; j < 6; j++) {
             if (kbd->last_report.keycodes[j] == key) {
                 is_new = false;
                 break;
@@ -123,7 +137,8 @@ static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
             if (key == 0x4C) { kbd_push_char(KEY_DELETE); continue; }
 
             if (key < 128) {
-                uint16_t c = shift ? hid_scancode_shift[key] : hid_scancode_unmodified[key];
+                uint16_t c;
+                c = shift ? hid_scancode_shift[key] : hid_scancode_unmodified[key];
                 if (ctrl && c != 0) {
                     if (c >= 'a' && c <= 'z') {
                         kbd_push_char((uint16_t)(c - 'a' + 1));
@@ -169,24 +184,28 @@ void usb_mouse_get_state(int32_t *x, int32_t *y, uint8_t *buttons) {
 }
 
 static void submit_kbd_transfer(usb_hid_kbd_t *kbd) {
-    xhci_controller_t *ctrl = xhci_get_controller();
+    xhci_controller_t *ctrl;
+    ctrl = xhci_get_controller();
     xhci_submit_async_trb(ctrl, kbd->dev->slot_id, kbd->in_dci, &kbd->report, sizeof(usb_kbd_report_t), true);
     kbd->transfer_pending = true;
     xhci_ring_doorbell(ctrl, kbd->dev->slot_id, kbd->in_dci);
 }
 
 static void submit_mouse_transfer(usb_hid_mouse_t *mouse) {
-    xhci_controller_t *ctrl = xhci_get_controller();
+    xhci_controller_t *ctrl;
+    ctrl = xhci_get_controller();
     xhci_submit_async_trb(ctrl, mouse->dev->slot_id, mouse->in_dci, &mouse->report, sizeof(usb_mouse_report_t), true);
     mouse->transfer_pending = true;
     xhci_ring_doorbell(ctrl, mouse->dev->slot_id, mouse->in_dci);
 }
 
 void usb_hid_on_transfer_complete(uint8_t slot_id, uint8_t ep_dci, uint32_t status) {
+    size_t i;
+
     UNUSED(status);
 
-    // Check keyboards
-    for (size_t i = 0; i < kbd_count; i++) {
+    /* Check keyboards */
+    for (i = 0; i < kbd_count; i++) {
         if (kbds[i].active && kbds[i].dev->slot_id == slot_id && kbds[i].in_dci == ep_dci) {
             process_kbd_report(&kbds[i], &kbds[i].report);
             submit_kbd_transfer(&kbds[i]);
@@ -194,8 +213,8 @@ void usb_hid_on_transfer_complete(uint8_t slot_id, uint8_t ep_dci, uint32_t stat
         }
     }
 
-    // Check mice
-    for (size_t i = 0; i < mouse_count; i++) {
+    /* Check mice */
+    for (i = 0; i < mouse_count; i++) {
         if (mice[i].active && mice[i].dev->slot_id == slot_id && mice[i].in_dci == ep_dci) {
             process_mouse_report(&mice[i], &mice[i].report);
             submit_mouse_transfer(&mice[i]);
@@ -205,6 +224,9 @@ void usb_hid_on_transfer_complete(uint8_t slot_id, uint8_t ep_dci, uint32_t stat
 }
 
 int usb_hid_init_device(usb_device_t *dev, usb_interface_t *iface) {
+    usb_endpoint_t *in_ep;
+    uint8_t i;
+
     usb_control_msg(dev,
                     USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
                     USB_HID_REQ_SET_IDLE,
@@ -215,8 +237,8 @@ int usb_hid_init_device(usb_device_t *dev, usb_interface_t *iface) {
                     USB_HID_REQ_SET_PROTOCOL,
                     0, iface->interface_number, NULL, 0);
 
-    usb_endpoint_t *in_ep = NULL;
-    for (uint8_t i = 0; i < iface->num_endpoints; i++) {
+    in_ep = NULL;
+    for (i = 0; i < iface->num_endpoints; i++) {
         if ((iface->endpoints[i].address & USB_DIR_IN) &&
             ((iface->endpoints[i].attributes & 0x03) == 0x03)) {
             in_ep = &iface->endpoints[i];
@@ -269,13 +291,15 @@ int usb_hid_init_device(usb_device_t *dev, usb_interface_t *iface) {
 }
 
 void usb_hid_poll(void) {
-    for (size_t i = 0; i < kbd_count; i++) {
+    size_t i;
+
+    for (i = 0; i < kbd_count; i++) {
         if (kbds[i].active && !kbds[i].transfer_pending) {
             submit_kbd_transfer(&kbds[i]);
         }
     }
 
-    for (size_t i = 0; i < mouse_count; i++) {
+    for (i = 0; i < mouse_count; i++) {
         if (mice[i].active && !mice[i].transfer_pending) {
             submit_mouse_transfer(&mice[i]);
         }

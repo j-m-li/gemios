@@ -21,19 +21,20 @@ static void pit_irq_handler(registers_t *regs) {
 }
 
 void pit_init(uint32_t frequency) {
+    uint32_t divisor;
     current_freq = frequency;
-    uint32_t divisor = PIT_BASE_FREQ / frequency;
+    divisor = PIT_BASE_FREQ / frequency;
 
     if (divisor == 0) divisor = 1;
     if (divisor > 65535) divisor = 65535;
 
-    // Channel 0, lobyte/hibyte, mode 3 (square wave), binary
+    /* Channel 0, lobyte/hibyte, mode 3 (square wave), binary */
     outb(PIT_COMMAND, 0x36);
     outb(PIT_CH0_DATA, (uint8_t)(divisor & 0xFF));
     outb(PIT_CH0_DATA, (uint8_t)((divisor >> 8) & 0xFF));
 
     register_interrupt_handler(32, pit_irq_handler);
-    pic_unmask_irq(0); // Unmask IRQ0
+    pic_unmask_irq(0); /* Unmask IRQ0 */
 }
 
 uint32_t pit_get_ticks(void) {

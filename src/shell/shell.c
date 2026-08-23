@@ -34,25 +34,30 @@ static int history_browse_idx = -1;
 static char current_draft[CMD_BUFFER_SIZE];
 
 static void history_add(const char *cmd) {
+    size_t slot;
+
     if (!cmd || cmd[0] == '\0') return;
 
-    // Avoid duplicate of most recent entry
+    /* Avoid duplicate of most recent entry */
     if (history_count > 0) {
-        size_t last_slot = (history_count - 1) % HISTORY_SIZE;
+        size_t last_slot;
+        last_slot = (history_count - 1) % HISTORY_SIZE;
         if (strcmp(history[last_slot], cmd) == 0) {
             return;
         }
     }
 
-    size_t slot = history_count % HISTORY_SIZE;
+    slot = history_count % HISTORY_SIZE;
     strncpy(history[slot], cmd, CMD_BUFFER_SIZE - 1);
     history[slot][CMD_BUFFER_SIZE - 1] = '\0';
     history_count++;
 }
 
 static const char *history_get(size_t index) {
+    size_t oldest;
+
     if (index >= history_count) return NULL;
-    size_t oldest = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
+    oldest = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
     if (index < oldest) return NULL;
     return history[index % HISTORY_SIZE];
 }
@@ -87,6 +92,9 @@ static void cmd_help(int argc, char **argv) {
 }
 
 static void cmd_history(int argc, char **argv) {
+    size_t start;
+    size_t i;
+
     UNUSED(argc);
     UNUSED(argv);
     kprintf("\n--- Command History ---\n");
@@ -95,21 +103,25 @@ static void cmd_history(int argc, char **argv) {
         return;
     }
 
-    size_t start = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
-    for (size_t i = start; i < history_count; i++) {
+    start = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
+    for (i = start; i < history_count; i++) {
         kprintf("  %3u  %s\n", (uint32_t)(i + 1), history[i % HISTORY_SIZE]);
     }
 }
 
 static void cmd_ps(int argc, char **argv) {
+    size_t count;
+    size_t i;
+
     UNUSED(argc);
     UNUSED(argv);
     kprintf("\n  ID  Name              State    Pri  Runtime(ms)  Stack Size\n");
     kprintf("  ----------------------------------------------------------\n");
 
-    size_t count = rtos_get_task_count();
-    for (size_t i = 0; i < count; i++) {
-        task_t *t = rtos_get_task_by_index(i);
+    count = rtos_get_task_count();
+    for (i = 0; i < count; i++) {
+        task_t *t;
+        t = rtos_get_task_by_index(i);
         if (!t) continue;
 
         kprintf("  %2u  %-16s  %-7s  %2u   %10u   %6u B\n",
@@ -120,13 +132,23 @@ static void cmd_ps(int argc, char **argv) {
 }
 
 static void cmd_mem(int argc, char **argv) {
+    size_t total_p;
+    size_t free_p;
+    size_t used_p;
+    size_t h_total;
+    size_t h_used;
+    size_t h_free;
+
     UNUSED(argc);
     UNUSED(argv);
-    size_t total_p = pmm_get_total_pages();
-    size_t free_p = pmm_get_free_pages();
-    size_t used_p = pmm_get_used_pages();
 
-    size_t h_total = 0, h_used = 0, h_free = 0;
+    total_p = pmm_get_total_pages();
+    free_p = pmm_get_free_pages();
+    used_p = pmm_get_used_pages();
+
+    h_total = 0;
+    h_used = 0;
+    h_free = 0;
     heap_stats(&h_total, &h_used, &h_free);
 
     kprintf("\n--- Physical Memory ---\n");
@@ -141,14 +163,18 @@ static void cmd_mem(int argc, char **argv) {
 }
 
 static void cmd_pci(int argc, char **argv) {
+    size_t count;
+    size_t i;
+
     UNUSED(argc);
     UNUSED(argv);
     kprintf("\n  Bus:Slot.Fn  Vendor:Device  Class  Description\n");
     kprintf("  --------------------------------------------------------------\n");
 
-    size_t count = pci_get_device_count();
-    for (size_t i = 0; i < count; i++) {
-        pci_device_t *d = pci_get_device(i);
+    count = pci_get_device_count();
+    for (i = 0; i < count; i++) {
+        pci_device_t *d;
+        d = pci_get_device(i);
         if (!d) continue;
 
         kprintf("  %02x:%02x.%u    %04x:%04x       %02x    %s\n",
@@ -158,18 +184,24 @@ static void cmd_pci(int argc, char **argv) {
 }
 
 static void cmd_lsusb(int argc, char **argv) {
+    size_t count;
+    size_t i;
+
     UNUSED(argc);
     UNUSED(argv);
     kprintf("\n--- USB Device Tree (xHCI) ---\n");
 
-    size_t count = usb_get_device_count();
+    count = usb_get_device_count();
     if (count == 0) {
         kprintf("  No USB devices detected.\n");
         return;
     }
 
-    for (size_t i = 0; i < count; i++) {
-        usb_device_t *dev = usb_get_device_by_index(i);
+    for (i = 0; i < count; i++) {
+        usb_device_t *dev;
+        uint8_t if_idx;
+
+        dev = usb_get_device_by_index(i);
         if (!dev) continue;
 
         if (dev->parent_hub_slot == 0) {
@@ -183,15 +215,21 @@ static void cmd_lsusb(int argc, char **argv) {
                 usb_speed_to_string(dev->speed), dev->dev_desc.idVendor, dev->dev_desc.idProduct,
                 dev->dev_desc.bDeviceClass, dev->dev_desc.bDeviceSubClass);
 
-        for (uint8_t if_idx = 0; if_idx < dev->num_interfaces; if_idx++) {
-            usb_interface_t *iface = &dev->interfaces[if_idx];
+        for (if_idx = 0; if_idx < dev->num_interfaces; if_idx++) {
+            usb_interface_t *iface;
+            uint8_t ep_idx;
+
+            iface = &dev->interfaces[if_idx];
             kprintf("      Interface %u: Class 0x%02x (%s), %u Endpoints\n",
                     iface->interface_number, iface->interface_class,
                     usb_class_to_string(iface->interface_class), iface->num_endpoints);
 
-            for (uint8_t ep_idx = 0; ep_idx < iface->num_endpoints; ep_idx++) {
-                usb_endpoint_t *ep = &iface->endpoints[ep_idx];
-                const char *dir = (ep->address & 0x80) ? "IN" : "OUT";
+            for (ep_idx = 0; ep_idx < iface->num_endpoints; ep_idx++) {
+                usb_endpoint_t *ep;
+                const char *dir;
+
+                ep = &iface->endpoints[ep_idx];
+                dir = (ep->address & 0x80) ? "IN" : "OUT";
                 kprintf("        EP 0x%02x (%s, DCI %u): MaxPkt=%u Interval=%u\n",
                         ep->address, dir, ep->dci, ep->max_packet_size, ep->interval);
             }
@@ -200,18 +238,22 @@ static void cmd_lsusb(int argc, char **argv) {
 }
 
 static void cmd_storage(int argc, char **argv) {
+    size_t count;
+    size_t i;
+
     UNUSED(argc);
     UNUSED(argv);
     kprintf("\n--- Storage Devices ---\n");
 
-    size_t count = blockdev_count();
+    count = blockdev_count();
     if (count == 0) {
         kprintf("  No storage block devices found.\n");
         return;
     }
 
-    for (size_t i = 0; i < count; i++) {
-        block_dev_t *bdev = blockdev_get_by_index(i);
+    for (i = 0; i < count; i++) {
+        block_dev_t *bdev;
+        bdev = blockdev_get_by_index(i);
         if (!bdev) continue;
 
         kprintf("  Device: %s\n", bdev->name);
@@ -224,7 +266,9 @@ static void cmd_storage(int argc, char **argv) {
 }
 
 static uint32_t parse_int(const char *str) {
-    uint32_t val = 0;
+    uint32_t val;
+    val = 0;
+
     if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
         str += 2;
         while (*str) {
@@ -243,25 +287,30 @@ static uint32_t parse_int(const char *str) {
 }
 
 static void cmd_readsec(int argc, char **argv) {
+    const char *dev_name;
+    uint32_t lba;
+    block_dev_t *bdev;
+    uint8_t buffer[512];
+    int res;
+
     if (argc < 3) {
         kprintf("Usage: readsec <dev_name> <lba>\nExample: readsec usb0 0\n");
         return;
     }
 
-    const char *dev_name = argv[1];
-    uint32_t lba = parse_int(argv[2]);
+    dev_name = argv[1];
+    lba = parse_int(argv[2]);
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprintf("Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    uint8_t buffer[512];
     memset(buffer, 0, sizeof(buffer));
 
     kprintf("Reading sector %u from %s...\n", lba, dev_name);
-    int res = bdev->read(bdev, lba, 1, buffer);
+    res = bdev->read(bdev, lba, 1, buffer);
     if (res != 0) {
         kprint_color(0x4F, "Read failed with error code %d\n", res);
         return;
@@ -271,27 +320,33 @@ static void cmd_readsec(int argc, char **argv) {
 }
 
 static void cmd_writesec(int argc, char **argv) {
+    const char *dev_name;
+    uint32_t lba;
+    const char *text;
+    block_dev_t *bdev;
+    uint8_t buffer[512];
+    int res;
+
     if (argc < 4) {
         kprintf("Usage: writesec <dev_name> <lba> <text>\nExample: writesec usb0 100 \"Hello USB!\"\n");
         return;
     }
 
-    const char *dev_name = argv[1];
-    uint32_t lba = parse_int(argv[2]);
-    const char *text = argv[3];
+    dev_name = argv[1];
+    lba = parse_int(argv[2]);
+    text = argv[3];
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprintf("Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    uint8_t buffer[512];
     memset(buffer, 0, sizeof(buffer));
     strncpy((char*)buffer, text, sizeof(buffer) - 1);
 
     kprintf("Writing text to sector %u on %s...\n", lba, dev_name);
-    int res = bdev->write(bdev, lba, 1, buffer);
+    res = bdev->write(bdev, lba, 1, buffer);
     if (res != 0) {
         kprint_color(0x4F, "Write failed with error code %d\n", res);
         return;
@@ -325,8 +380,14 @@ static void shell_build_path(const char *in_path, char *out_path, size_t out_max
 }
 
 static void cmd_cd(int argc, char **argv) {
-    const char *dev_name = g_shell_dev;
-    const char *target = "/";
+    const char *dev_name;
+    const char *target;
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    char full_path[256];
+
+    dev_name = g_shell_dev;
+    target = "/";
 
     if (argc == 2) {
         if (blockdev_get(argv[1]) != NULL) {
@@ -340,19 +401,17 @@ static void cmd_cd(int argc, char **argv) {
         target = argv[2];
     }
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
         return;
     }
 
-    char full_path[256];
     shell_build_path(target, full_path, sizeof(full_path));
 
     if (fat_is_dir(&fs, full_path) != 1) {
@@ -366,14 +425,15 @@ static void cmd_cd(int argc, char **argv) {
     } else if (target[0] == '/') {
         strncpy(g_shell_cwd, target, sizeof(g_shell_cwd) - 1);
     } else if (strcmp(target, "..") == 0) {
-        char *last = strrchr(g_shell_cwd, '/');
+        char *last;
+        last = strrchr(g_shell_cwd, '/');
         if (last && last != g_shell_cwd) {
             *last = '\0';
         } else {
             strcpy(g_shell_cwd, "/");
         }
     } else if (strcmp(target, ".") == 0) {
-        // No-op
+        /* No-op */
     } else {
         strncpy(g_shell_cwd, full_path, sizeof(g_shell_cwd) - 1);
     }
@@ -387,22 +447,32 @@ static void cmd_pwd(int argc, char **argv) {
 }
 
 static void cmd_ls(int argc, char **argv) {
-    const char *dev_name = g_shell_dev;
-    const char *target = g_shell_cwd;
+    const char *dev_name;
+    const char *target;
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    char full_path[256];
+    int res;
+
+    dev_name = g_shell_dev;
+    target = g_shell_cwd;
 
     if (argc == 2) {
         if (argv[1][0] == '/' || argv[1][0] == '\\') {
             target = argv[1];
         } else {
-            // Check if it's a directory on current device first
-            block_dev_t *cur_bdev = blockdev_get(g_shell_dev);
-            bool is_dir = false;
+            /* Check if it's a directory on current device first */
+            block_dev_t *cur_bdev;
+            bool is_dir;
+
+            cur_bdev = blockdev_get(g_shell_dev);
+            is_dir = false;
             if (cur_bdev) {
                 fat_fs_t cur_fs;
                 if (fat_mount(cur_bdev, &cur_fs) == 0) {
-                    char full_path[256];
-                    shell_build_path(argv[1], full_path, sizeof(full_path));
-                    if (fat_is_dir(&cur_fs, full_path) == 1) {
+                    char cur_full_path[256];
+                    shell_build_path(argv[1], cur_full_path, sizeof(cur_full_path));
+                    if (fat_is_dir(&cur_fs, cur_full_path) == 1) {
                         is_dir = true;
                         target = argv[1];
                     }
@@ -423,30 +493,37 @@ static void cmd_ls(int argc, char **argv) {
         target = argv[2];
     }
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
         return;
     }
 
-    char full_path[256];
     shell_build_path(target, full_path, sizeof(full_path));
 
-    int res = fat_list_dir(&fs, full_path);
+    res = fat_list_dir(&fs, full_path);
     if (res < 0) {
         kprint_color(0x4F, "Failed to read directory '%s' from '%s'.\n", target, dev_name);
     }
 }
 
 static void cmd_cat(int argc, char **argv) {
-    const char *dev_name = g_shell_dev;
-    const char *filename = NULL;
+    const char *dev_name;
+    const char *filename;
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    char full_path[256];
+    size_t buf_size;
+    char *buf;
+    size_t out_len;
+
+    dev_name = g_shell_dev;
+    filename = NULL;
 
     if (argc == 2) {
         filename = argv[1];
@@ -458,34 +535,34 @@ static void cmd_cat(int argc, char **argv) {
         return;
     }
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
         return;
     }
 
-    char full_path[256];
     shell_build_path(filename, full_path, sizeof(full_path));
 
-    size_t buf_size = 65536;
-    char *buf = (char*)kmalloc(buf_size);
+    buf_size = 65536;
+    buf = (char*)kmalloc(buf_size);
     if (!buf) {
         kprint_color(0x4F, "Failed to allocate buffer for file read.\n");
         return;
     }
 
-    size_t out_len = 0;
+    out_len = 0;
     if (fat_read_file(&fs, full_path, buf, buf_size - 1, &out_len) == 0) {
+        size_t i;
         kprintf("\n--- %s (%u bytes) ---\n", filename, (uint32_t)out_len);
-        size_t i = 0;
+        i = 0;
         while (i < out_len) {
-            char ch = buf[i];
+            char ch;
+            ch = buf[i];
             if (ch == '\r') {
                 i++;
                 continue;
@@ -504,16 +581,21 @@ static void cmd_cat(int argc, char **argv) {
                 }
                 i++;
             } else {
-                // Multi-byte UTF-8 character
-                uint32_t cp = 0;
-                int c_len = utf8_decode(&buf[i], &cp);
+                /* Multi-byte UTF-8 character */
+                uint32_t cp;
+                int c_len;
+                uint8_t glyph;
+                int k;
+
+                cp = 0;
+                c_len = utf8_decode(&buf[i], &cp);
                 if (c_len <= 0) c_len = 1;
 
-                uint8_t glyph = utf8_to_cp437(cp);
+                glyph = utf8_to_cp437(cp);
                 vga_putc((char)glyph);
 
-                // Pass full UTF-8 byte sequence to serial
-                for (int k = 0; k < c_len && i + k < out_len; k++) {
+                /* Pass full UTF-8 byte sequence to serial */
+                for (k = 0; k < c_len && i + k < out_len; k++) {
                     serial_putc(buf[i + k]);
                 }
                 i += c_len;
@@ -528,8 +610,15 @@ static void cmd_cat(int argc, char **argv) {
 }
 
 static void cmd_mkdir(int argc, char **argv) {
-    const char *dev_name = g_shell_dev;
-    const char *dirname = NULL;
+    const char *dev_name;
+    const char *dirname;
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    char full_path[256];
+    int res;
+
+    dev_name = g_shell_dev;
+    dirname = NULL;
 
     if (argc == 2) {
         dirname = argv[1];
@@ -541,22 +630,20 @@ static void cmd_mkdir(int argc, char **argv) {
         return;
     }
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
         return;
     }
 
-    char full_path[256];
     shell_build_path(dirname, full_path, sizeof(full_path));
 
-    int res = fat_mkdir(&fs, full_path);
+    res = fat_mkdir(&fs, full_path);
     if (res == 0) {
         kprint_color(0x0A, "Directory '%s' created successfully on '%s'.\n", dirname, dev_name);
     } else if (res == -2) {
@@ -567,14 +654,25 @@ static void cmd_mkdir(int argc, char **argv) {
 }
 
 static void cmd_rm(int argc, char **argv) {
-    bool recursive = false;
-    bool force = false;
-    const char *dev_name = g_shell_dev;
-    const char *target = NULL;
+    bool recursive;
+    bool force;
+    const char *dev_name;
+    const char *target;
+    int i;
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    char full_path[256];
+    int res;
 
-    for (int i = 1; i < argc; i++) {
+    recursive = false;
+    force = false;
+    dev_name = g_shell_dev;
+    target = NULL;
+
+    for (i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
-            const char *opt = &argv[i][1];
+            const char *opt;
+            opt = &argv[i][1];
             while (*opt) {
                 if (*opt == 'r' || *opt == 'R') recursive = true;
                 else if (*opt == 'f') force = true;
@@ -592,22 +690,20 @@ static void cmd_rm(int argc, char **argv) {
         return;
     }
 
-    block_dev_t *bdev = blockdev_get(dev_name);
+    bdev = blockdev_get(dev_name);
     if (!bdev) {
         kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
         return;
     }
 
-    fat_fs_t fs;
     if (fat_mount(bdev, &fs) != 0) {
         kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
         return;
     }
 
-    char full_path[256];
     shell_build_path(target, full_path, sizeof(full_path));
 
-    int res = fat_remove(&fs, full_path, recursive);
+    res = fat_remove(&fs, full_path, recursive);
     if (res > 0) {
         if (strchr(target, '*') != NULL || strchr(target, '?') != NULL) {
             kprint_color(0x0A, "Removed %d item(s) on '%s'.\n", res, dev_name);
@@ -624,10 +720,16 @@ static void cmd_rm(int argc, char **argv) {
 }
 
 static void cmd_mouse(int argc, char **argv) {
+    int32_t x;
+    int32_t y;
+    uint8_t buttons;
+
     UNUSED(argc);
     UNUSED(argv);
-    int32_t x = 0, y = 0;
-    uint8_t buttons = 0;
+
+    x = 0;
+    y = 0;
+    buttons = 0;
     usb_mouse_get_state(&x, &y, &buttons);
     kprintf("USB Mouse Position: X=%d, Y=%d | Buttons: Left=%s Right=%s Middle=%s\n",
             x, y,
@@ -638,20 +740,26 @@ static void cmd_mouse(int argc, char **argv) {
 
 static volatile uint32_t bench_counter = 0;
 static void bench_worker(void *arg) {
+    int i;
     UNUSED(arg);
-    for (int i = 0; i < 50000; i++) {
+    for (i = 0; i < 50000; i++) {
         bench_counter++;
         rtos_yield();
     }
 }
 
 static void cmd_bench(int argc, char **argv) {
+    uint32_t start_time;
+    uint32_t end_time;
+    uint32_t elapsed_ms;
+    uint32_t switches_per_sec;
+
     UNUSED(argc);
     UNUSED(argv);
     kprintf("\nRunning RTOS Context Switch Benchmark (100,000 switches)...\n");
 
     bench_counter = 0;
-    uint32_t start_time = pit_get_ticks();
+    start_time = pit_get_ticks();
 
     rtos_task_create("bench1", bench_worker, NULL, RTOS_PRIORITY_NORMAL, 4096);
     rtos_task_create("bench2", bench_worker, NULL, RTOS_PRIORITY_NORMAL, 4096);
@@ -660,19 +768,22 @@ static void cmd_bench(int argc, char **argv) {
         rtos_yield();
     }
 
-    uint32_t end_time = pit_get_ticks();
-    uint32_t elapsed_ms = end_time - start_time;
+    end_time = pit_get_ticks();
+    elapsed_ms = end_time - start_time;
     if (elapsed_ms == 0) elapsed_ms = 1;
 
-    uint32_t switches_per_sec = (100000 * 1000) / elapsed_ms;
+    switches_per_sec = (100000 * 1000) / elapsed_ms;
     kprintf("Done! Time: %u ms | Rate: %u context switches/sec\n", elapsed_ms, switches_per_sec);
 }
 
 static void cmd_uptime(int argc, char **argv) {
+    uint32_t sec;
+    uint32_t ms;
+
     UNUSED(argc);
     UNUSED(argv);
-    uint32_t sec = pit_get_uptime_sec();
-    uint32_t ms = pit_get_uptime_ms();
+    sec = pit_get_uptime_sec();
+    ms = pit_get_uptime_ms();
     kprintf("Uptime: %u seconds (%u ms, %u ticks)\n", sec, ms, pit_get_ticks());
 }
 
@@ -686,13 +797,16 @@ static void cmd_reboot(int argc, char **argv) {
     UNUSED(argc);
     UNUSED(argv);
     kprintf("Rebooting system...\n");
-    outb(0x64, 0xFE);
-    __asm__ volatile ("lidt (0); int $3");
+    arch_reboot();
 }
 
 static void cmd_edit(int argc, char **argv) {
-    const char *dev_name = g_shell_dev;
-    const char *filename = "UNTITLED.TXT";
+    const char *dev_name;
+    const char *filename;
+    char full_path[256];
+
+    dev_name = g_shell_dev;
+    filename = "UNTITLED.TXT";
 
     if (argc == 2) {
         filename = argv[1];
@@ -701,14 +815,17 @@ static void cmd_edit(int argc, char **argv) {
         filename = argv[2];
     }
 
-    char full_path[256];
     shell_build_path(filename, full_path, sizeof(full_path));
     editor_open(dev_name, full_path);
 }
 
 void shell_execute_command(char *cmd_line) {
-    // 1. Expand history reference (!n or !!)
     char expanded[CMD_BUFFER_SIZE];
+    char *argv[MAX_ARGS];
+    int argc;
+    char *p;
+
+    /* 1. Expand history reference (!n or !!) */
     expanded[0] = '\0';
 
     if (cmd_line[0] == '!' && history_count > 0) {
@@ -738,13 +855,11 @@ void shell_execute_command(char *cmd_line) {
     expanded[sizeof(expanded) - 1] = '\0';
     if (strlen(expanded) == 0) return;
 
-    // Add to history
+    /* Add to history */
     history_add(expanded);
 
-    char *argv[MAX_ARGS];
-    int argc = 0;
-
-    char *p = expanded;
+    argc = 0;
+    p = expanded;
     while (*p && argc < MAX_ARGS) {
         while (*p == ' ') p++;
         if (*p == '\0') break;
@@ -804,12 +919,15 @@ static int shell_get_char(void) {
         return (int)usb_kbd_getchar();
     }
     if (serial_has_char()) {
-        uint8_t c = (uint8_t)serial_getchar();
-        // Parse ANSI Escape Sequence: ESC [ A / B / C / D
-        if (c == 27) { // ESC
-            int c2 = get_serial_byte_timed(500000);
+        uint8_t c;
+        c = (uint8_t)serial_getchar();
+        /* Parse ANSI Escape Sequence: ESC [ A / B / C / D */
+        if (c == 27) { /* ESC */
+            int c2;
+            c2 = get_serial_byte_timed(500000);
             if (c2 == '[') {
-                int c3 = get_serial_byte_timed(500000);
+                int c3;
+                c3 = get_serial_byte_timed(500000);
                 if (c3 == 'A') return KEY_UP;
                 if (c3 == 'B') return KEY_DOWN;
                 if (c3 == 'C') return KEY_RIGHT;
@@ -824,9 +942,11 @@ static int shell_get_char(void) {
 }
 
 void shell_task(void *arg) {
-    UNUSED(arg);
     char cmd_buffer[CMD_BUFFER_SIZE];
-    size_t cmd_pos = 0;
+    size_t cmd_pos;
+
+    UNUSED(arg);
+    cmd_pos = 0;
     cmd_buffer[0] = '\0';
     current_draft[0] = '\0';
     history_browse_idx = -1;
@@ -835,9 +955,11 @@ void shell_task(void *arg) {
     kprintf("gemios> ");
 
     while (1) {
+        int c;
+
         xhci_poll();
 
-        int c = shell_get_char();
+        c = shell_get_char();
         if (c != 0) {
             if (c == '\n' || c == '\r') {
                 kprintf("\n");
@@ -851,9 +973,12 @@ void shell_task(void *arg) {
                 current_draft[0] = '\0';
                 kprintf("gemios> ");
             } else if (c == KEY_UP) {
-                // Navigate backwards in history
+                /* Navigate backwards in history */
                 if (history_count > 0) {
-                    size_t oldest = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
+                    size_t oldest;
+                    const char *entry;
+
+                    oldest = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
                     if (history_browse_idx == -1) {
                         cmd_buffer[cmd_pos] = '\0';
                         strncpy(current_draft, cmd_buffer, sizeof(current_draft) - 1);
@@ -862,13 +987,13 @@ void shell_task(void *arg) {
                         history_browse_idx--;
                     }
 
-                    // Erase current prompt line
+                    /* Erase current prompt line */
                     while (cmd_pos > 0) {
                         kprintf("\b \b");
                         cmd_pos--;
                     }
 
-                    const char *entry = history_get(history_browse_idx);
+                    entry = history_get(history_browse_idx);
                     if (entry) {
                         strncpy(cmd_buffer, entry, sizeof(cmd_buffer) - 1);
                         cmd_pos = strlen(cmd_buffer);
@@ -876,9 +1001,10 @@ void shell_task(void *arg) {
                     }
                 }
             } else if (c == KEY_DOWN) {
-                // Navigate forward in history
+                /* Navigate forward in history */
                 if (history_browse_idx != -1) {
                     if (history_browse_idx < (int)history_count - 1) {
+                        const char *entry;
                         history_browse_idx++;
 
                         while (cmd_pos > 0) {
@@ -886,14 +1012,14 @@ void shell_task(void *arg) {
                             cmd_pos--;
                         }
 
-                        const char *entry = history_get(history_browse_idx);
+                        entry = history_get(history_browse_idx);
                         if (entry) {
                             strncpy(cmd_buffer, entry, sizeof(cmd_buffer) - 1);
                             cmd_pos = strlen(cmd_buffer);
                             kprintf("%s", cmd_buffer);
                         }
                     } else {
-                        // Restore draft line
+                        /* Restore draft line */
                         history_browse_idx = -1;
 
                         while (cmd_pos > 0) {
@@ -914,7 +1040,7 @@ void shell_task(void *arg) {
                 }
             } else if ((uint8_t)c >= 32 && (uint8_t)c <= 126) {
                 if (cmd_pos < CMD_BUFFER_SIZE - 1) {
-                    cmd_buffer[cmd_pos++] = c;
+                    cmd_buffer[cmd_pos++] = (char)c;
                     cmd_buffer[cmd_pos] = '\0';
                     kprintf("%c", c);
                 }

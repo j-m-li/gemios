@@ -4,14 +4,13 @@
  */
 
 #include "gdt.h"
+#include "io.h"
 #include "string.h"
 
 #define GDT_ENTRIES 5
 
 static struct gdt_entry gdt[GDT_ENTRIES];
 static struct gdt_ptr gp;
-
-extern void gdt_flush(uint32_t);
 
 static void gdt_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
     gdt[num].base_low = (base & 0xFFFF);
@@ -29,31 +28,20 @@ void gdt_init(void) {
     gp.limit = (sizeof(struct gdt_entry) * GDT_ENTRIES) - 1;
     gp.base = (uint32_t)&gdt;
 
-    // 0x00: Null descriptor
+    /* 0x00: Null descriptor */
     gdt_set_gate(0, 0, 0, 0, 0);
 
-    // 0x08: Kernel Code segment (0..4GB, Ring 0, Exec/Read)
+    /* 0x08: Kernel Code segment (0..4GB, Ring 0, Exec/Read) */
     gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xCF);
 
-    // 0x10: Kernel Data segment (0..4GB, Ring 0, Read/Write)
+    /* 0x10: Kernel Data segment (0..4GB, Ring 0, Read/Write) */
     gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);
 
-    // 0x18: User Code segment (0..4GB, Ring 3, Exec/Read)
+    /* 0x18: User Code segment (0..4GB, Ring 3, Exec/Read) */
     gdt_set_gate(3, 0, 0xFFFFFFFF, 0xFA, 0xCF);
 
-    // 0x20: User Data segment (0..4GB, Ring 3, Read/Write)
+    /* 0x20: User Data segment (0..4GB, Ring 3, Read/Write) */
     gdt_set_gate(4, 0, 0xFFFFFFFF, 0xF2, 0xCF);
 
-    __asm__ volatile (
-        "lgdt %0\n"
-        "mov $0x10, %%ax\n"
-        "mov %%ax, %%ds\n"
-        "mov %%ax, %%es\n"
-        "mov %%ax, %%fs\n"
-        "mov %%ax, %%gs\n"
-        "mov %%ax, %%ss\n"
-        "ljmp $0x08, $1f\n"
-        "1:\n"
-        : : "m"(gp) : "eax", "memory"
-    );
+    load_gdt(&gp);
 }

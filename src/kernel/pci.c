@@ -11,62 +11,80 @@ static pci_device_t pci_devices[MAX_PCI_DEVICES];
 static size_t pci_device_count = 0;
 
 uint32_t pci_read_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+    uint32_t address;
+    address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
     outl(PCI_CONFIG_ADDRESS, address);
     return inl(PCI_CONFIG_DATA);
 }
 
 uint16_t pci_read_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+    uint32_t address;
+    address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
     outl(PCI_CONFIG_ADDRESS, address);
     return (uint16_t)((inl(PCI_CONFIG_DATA) >> ((offset & 2) * 8)) & 0xFFFF);
 }
 
 uint8_t pci_read_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+    uint32_t address;
+    address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
     outl(PCI_CONFIG_ADDRESS, address);
     return (uint8_t)((inl(PCI_CONFIG_DATA) >> ((offset & 3) * 8)) & 0xFF);
 }
 
 void pci_write_config32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t val) {
-    uint32_t address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+    uint32_t address;
+    address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
     outl(PCI_CONFIG_ADDRESS, address);
     outl(PCI_CONFIG_DATA, val);
 }
 
 void pci_write_config16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t val) {
-    uint32_t address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+    uint32_t address;
+    uint32_t cur;
+    uint32_t shift;
+
+    address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
     outl(PCI_CONFIG_ADDRESS, address);
-    uint32_t cur = inl(PCI_CONFIG_DATA);
-    uint32_t shift = (offset & 2) * 8;
+    cur = inl(PCI_CONFIG_DATA);
+    shift = (offset & 2) * 8;
     cur &= ~(0xFFFF << shift);
     cur |= ((uint32_t)val << shift);
     outl(PCI_CONFIG_DATA, cur);
 }
 
 void pci_write_config8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t val) {
-    uint32_t address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+    uint32_t address;
+    uint32_t cur;
+    uint32_t shift;
+
+    address = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
     outl(PCI_CONFIG_ADDRESS, address);
-    uint32_t cur = inl(PCI_CONFIG_DATA);
-    uint32_t shift = (offset & 3) * 8;
+    cur = inl(PCI_CONFIG_DATA);
+    shift = (offset & 3) * 8;
     cur &= ~(0xFF << shift);
     cur |= ((uint32_t)val << shift);
     outl(PCI_CONFIG_DATA, cur);
 }
 
 void pci_enable_bus_mastering(pci_device_t *dev) {
-    uint16_t cmd = pci_read_config16(dev->bus, dev->slot, dev->func, 0x04);
+    uint16_t cmd;
+    cmd = pci_read_config16(dev->bus, dev->slot, dev->func, 0x04);
     cmd |= (PCI_COMMAND_BUS_MASTER | PCI_COMMAND_MEMORY_SPACE | PCI_COMMAND_IO);
     pci_write_config16(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 
 static void pci_probe_device(uint8_t bus, uint8_t slot, uint8_t func) {
-    uint16_t vendor_id = pci_read_config16(bus, slot, func, 0x00);
+    uint16_t vendor_id;
+    pci_device_t *dev;
+    int max_bars;
+    int bar_idx;
+
+    vendor_id = pci_read_config16(bus, slot, func, 0x00);
     if (vendor_id == 0xFFFF || vendor_id == 0x0000) return;
 
     if (pci_device_count >= MAX_PCI_DEVICES) return;
 
-    pci_device_t *dev = &pci_devices[pci_device_count];
+    dev = &pci_devices[pci_device_count];
     memset(dev, 0, sizeof(pci_device_t));
 
     dev->bus = bus;
@@ -82,35 +100,41 @@ static void pci_probe_device(uint8_t bus, uint8_t slot, uint8_t func) {
     dev->irq_pin = pci_read_config8(bus, slot, func, 0x3D);
     dev->irq_line = pci_read_config8(bus, slot, func, 0x3C);
 
-    // Read BARs
-    int max_bars = (dev->header_type & 0x7F) == 0 ? 6 : 2;
-    for (int bar_idx = 0; bar_idx < max_bars; bar_idx++) {
-        uint8_t bar_offset = 0x10 + (bar_idx * 4);
-        uint32_t bar_val = pci_read_config32(bus, slot, func, bar_offset);
+    /* Read BARs */
+    max_bars = (dev->header_type & 0x7F) == 0 ? 6 : 2;
+    for (bar_idx = 0; bar_idx < max_bars; bar_idx++) {
+        uint8_t bar_offset;
+        uint32_t bar_val;
+
+        bar_offset = 0x10 + (bar_idx * 4);
+        bar_val = pci_read_config32(bus, slot, func, bar_offset);
 
         if (bar_val == 0) continue;
 
         if (bar_val & 0x01) {
-            // I/O Space BAR
+            /* I/O Space BAR */
             dev->bar_type[bar_idx] = 1;
             dev->bar[bar_idx] = bar_val & ~0x03;
         } else {
-            // Memory Space BAR
+            uint8_t mem_type;
+            uint32_t size_mask;
+
+            /* Memory Space BAR */
             dev->bar_type[bar_idx] = 0;
-            uint8_t mem_type = (bar_val >> 1) & 0x03;
+            mem_type = (bar_val >> 1) & 0x03;
             dev->bar[bar_idx] = bar_val & ~0x0F;
 
-            // Probe BAR size
+            /* Probe BAR size */
             pci_write_config32(bus, slot, func, bar_offset, 0xFFFFFFFF);
-            uint32_t size_mask = pci_read_config32(bus, slot, func, bar_offset);
-            pci_write_config32(bus, slot, func, bar_offset, bar_val); // Restore BAR
+            size_mask = pci_read_config32(bus, slot, func, bar_offset);
+            pci_write_config32(bus, slot, func, bar_offset, bar_val); /* Restore BAR */
 
             if (size_mask != 0 && size_mask != 0xFFFFFFFF) {
                 dev->bar_size[bar_idx] = ~(size_mask & ~0x0F) + 1;
             }
 
             if (mem_type == 0x02) {
-                // 64-bit BAR: skip next BAR slot
+                /* 64-bit BAR: skip next BAR slot */
                 bar_idx++;
             }
         }
@@ -120,19 +144,26 @@ static void pci_probe_device(uint8_t bus, uint8_t slot, uint8_t func) {
 }
 
 void pci_init(void) {
+    uint16_t bus;
+    uint8_t slot;
+
     pci_device_count = 0;
 
-    for (uint16_t bus = 0; bus < 256; bus++) {
-        for (uint8_t slot = 0; slot < 32; slot++) {
-            uint16_t vendor = pci_read_config16((uint8_t)bus, slot, 0, 0x00);
+    for (bus = 0; bus < 256; bus++) {
+        for (slot = 0; slot < 32; slot++) {
+            uint16_t vendor;
+            uint8_t header_type;
+
+            vendor = pci_read_config16((uint8_t)bus, slot, 0, 0x00);
             if (vendor == 0xFFFF) continue;
 
             pci_probe_device((uint8_t)bus, slot, 0);
 
-            uint8_t header_type = pci_read_config8((uint8_t)bus, slot, 0, 0x0E);
+            header_type = pci_read_config8((uint8_t)bus, slot, 0, 0x0E);
             if (header_type & 0x80) {
-                // Multi-function device
-                for (uint8_t func = 1; func < 8; func++) {
+                /* Multi-function device */
+                uint8_t func;
+                for (func = 1; func < 8; func++) {
                     if (pci_read_config16((uint8_t)bus, slot, func, 0x00) != 0xFFFF) {
                         pci_probe_device((uint8_t)bus, slot, func);
                     }
@@ -143,7 +174,8 @@ void pci_init(void) {
 }
 
 pci_device_t *pci_find_device(uint16_t vendor_id, uint16_t device_id) {
-    for (size_t i = 0; i < pci_device_count; i++) {
+    size_t i;
+    for (i = 0; i < pci_device_count; i++) {
         if (pci_devices[i].vendor_id == vendor_id && pci_devices[i].device_id == device_id) {
             return &pci_devices[i];
         }
@@ -152,7 +184,8 @@ pci_device_t *pci_find_device(uint16_t vendor_id, uint16_t device_id) {
 }
 
 pci_device_t *pci_find_class(uint8_t class_code, uint8_t subclass, uint8_t prog_if) {
-    for (size_t i = 0; i < pci_device_count; i++) {
+    size_t i;
+    for (i = 0; i < pci_device_count; i++) {
         if (pci_devices[i].class_code == class_code &&
             pci_devices[i].subclass == subclass &&
             (prog_if == 0xFF || pci_devices[i].prog_if == prog_if)) {

@@ -24,6 +24,12 @@ static void task_entry_wrapper(task_entry_fn entry, void *arg) {
 }
 
 task_t *rtos_task_create(const char *name, task_entry_fn entry, void *arg, uint8_t priority, uint32_t stack_size) {
+    uint32_t flags;
+    task_t *task;
+    size_t i;
+    uint8_t *stk;
+    registers_t *frame;
+
     if (priority > RTOS_MAX_PRIORITY) {
         priority = RTOS_MAX_PRIORITY;
     }
@@ -31,11 +37,11 @@ task_t *rtos_task_create(const char *name, task_entry_fn entry, void *arg, uint8
         stack_size = DEFAULT_STACK_SIZE;
     }
 
-    uint32_t flags = irq_save();
+    flags = irq_save();
 
-    // Find free TCB slot
-    task_t *task = NULL;
-    for (size_t i = 0; i < MAX_TASKS; i++) {
+    /* Find free TCB slot */
+    task = NULL;
+    for (i = 0; i < MAX_TASKS; i++) {
         if (task_table[i].state == TASK_STATE_UNUSED || task_table[i].state == TASK_STATE_TERMINATED) {
             task = &task_table[i];
             break;
@@ -69,10 +75,10 @@ task_t *rtos_task_create(const char *name, task_entry_fn entry, void *arg, uint8
     task->wait_object = NULL;
     task->next_wait = NULL;
 
-    // Prepare initial interrupt stack frame
-    uint8_t *stk = (uint8_t*)task->stack_base + task->stack_size;
+    /* Prepare initial interrupt stack frame */
+    stk = (uint8_t*)task->stack_base + task->stack_size;
 
-    // Push arguments for task_entry_wrapper (cdecl convention: [esp+8]=arg, [esp+4]=entry, [esp]=ret_addr)
+    /* Push arguments for task_entry_wrapper (cdecl convention: [esp+8]=arg, [esp+4]=entry, [esp]=ret_addr) */
     stk -= sizeof(void*);
     *(void**)stk = arg;
     stk -= sizeof(void*);
@@ -80,14 +86,14 @@ task_t *rtos_task_create(const char *name, task_entry_fn entry, void *arg, uint8
     stk -= sizeof(void*);
     *(void**)stk = (void*)rtos_task_exit;
 
-    // Push registers_t structure (56 bytes)
+    /* Push registers_t structure (56 bytes) */
     stk -= sizeof(registers_t);
-    registers_t *frame = (registers_t*)stk;
+    frame = (registers_t*)stk;
     memset(frame, 0, sizeof(registers_t));
     frame->ds = 0x10;
     frame->eip = (uint32_t)task_entry_wrapper;
     frame->cs = 0x08;
-    frame->eflags = 0x0202; // IF=1, Reserved=1
+    frame->eflags = 0x0202; /* IF=1, Reserved=1 */
 
     task->esp = (uint32_t*)stk;
     task->state = TASK_STATE_READY;
@@ -102,8 +108,11 @@ task_t *rtos_task_create(const char *name, task_entry_fn entry, void *arg, uint8
 }
 
 void rtos_task_exit(void) {
-    uint32_t flags = irq_save();
-    task_t *cur = rtos_current_task();
+    uint32_t flags;
+    task_t *cur;
+
+    flags = irq_save();
+    cur = rtos_current_task();
     if (cur) {
         cur->state = TASK_STATE_TERMINATED;
     }
@@ -114,8 +123,11 @@ void rtos_task_exit(void) {
 }
 
 void rtos_task_kill(uint32_t id) {
-    uint32_t flags = irq_save();
-    for (size_t i = 0; i < MAX_TASKS; i++) {
+    uint32_t flags;
+    size_t i;
+
+    flags = irq_save();
+    for (i = 0; i < MAX_TASKS; i++) {
         if (task_table[i].state != TASK_STATE_UNUSED && task_table[i].id == id) {
             task_table[i].state = TASK_STATE_TERMINATED;
             break;
@@ -126,7 +138,8 @@ void rtos_task_kill(uint32_t id) {
 }
 
 task_t *rtos_get_task(uint32_t id) {
-    for (size_t i = 0; i < MAX_TASKS; i++) {
+    size_t i;
+    for (i = 0; i < MAX_TASKS; i++) {
         if (task_table[i].state != TASK_STATE_UNUSED && task_table[i].id == id) {
             return &task_table[i];
         }
@@ -135,8 +148,11 @@ task_t *rtos_get_task(uint32_t id) {
 }
 
 size_t rtos_get_task_count(void) {
-    size_t count = 0;
-    for (size_t i = 0; i < MAX_TASKS; i++) {
+    size_t count;
+    size_t i;
+
+    count = 0;
+    for (i = 0; i < MAX_TASKS; i++) {
         if (task_table[i].state != TASK_STATE_UNUSED) {
             count++;
         }
@@ -145,8 +161,11 @@ size_t rtos_get_task_count(void) {
 }
 
 task_t *rtos_get_task_by_index(size_t index) {
-    size_t count = 0;
-    for (size_t i = 0; i < MAX_TASKS; i++) {
+    size_t count;
+    size_t i;
+
+    count = 0;
+    for (i = 0; i < MAX_TASKS; i++) {
         if (task_table[i].state != TASK_STATE_UNUSED) {
             if (count == index) {
                 return &task_table[i];

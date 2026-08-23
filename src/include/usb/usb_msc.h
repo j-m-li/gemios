@@ -9,8 +9,8 @@
 #include "usb_core.h"
 #include "blockdev.h"
 
-#define USB_MSC_CBW_SIGNATURE 0x43425355 // "USBC"
-#define USB_MSC_CSW_SIGNATURE 0x53425355 // "USBS"
+#define USB_MSC_CBW_SIGNATURE 0x43425355 /* "USBC" */
+#define USB_MSC_CSW_SIGNATURE 0x53425355 /* "USBS" */
 
 #define USB_MSC_CBW_FLAG_IN  0x80
 #define USB_MSC_CBW_FLAG_OUT 0x00

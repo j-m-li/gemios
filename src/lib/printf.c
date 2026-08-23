@@ -8,7 +8,10 @@
 
 /* 64-bit arithmetic helper routines for bare-metal x86 */
 uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p) {
-    uint64_t quot = 0, qbit = 1;
+    uint64_t quot;
+    uint64_t qbit;
+    quot = 0;
+    qbit = 1;
     if (den == 0) return 0;
     while ((int64_t)den >= 0 && den < num) {
         den <<= 1;
@@ -31,33 +34,43 @@ uint64_t __udivdi3(uint64_t a, uint64_t b) {
 }
 
 uint64_t __umoddi3(uint64_t a, uint64_t b) {
-    uint64_t rem = 0;
+    uint64_t rem;
+    rem = 0;
     __udivmoddi4(a, b, &rem);
     return rem;
 }
 
 int64_t __divdi3(int64_t a, int64_t b) {
-    bool neg = false;
+    bool neg;
+    uint64_t res;
+    neg = false;
     if (a < 0) { a = -a; neg = !neg; }
     if (b < 0) { b = -b; neg = !neg; }
-    uint64_t res = __udivmoddi4((uint64_t)a, (uint64_t)b, NULL);
+    res = __udivmoddi4((uint64_t)a, (uint64_t)b, NULL);
     return neg ? -(int64_t)res : (int64_t)res;
 }
 
 int64_t __moddi3(int64_t a, int64_t b) {
-    bool neg = false;
+    bool neg;
+    uint64_t rem;
+    neg = false;
+    rem = 0;
     if (a < 0) { a = -a; neg = true; }
     if (b < 0) { b = -b; }
-    uint64_t rem = 0;
     __udivmoddi4((uint64_t)a, (uint64_t)b, &rem);
     return neg ? -(int64_t)rem : (int64_t)rem;
 }
 
 static void format_number(char **buf, size_t *rem, uint64_t num, int base, int width, char pad_char, bool uppercase, bool is_signed, bool left_align) {
     char temp[64];
-    int pos = 0;
-    const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
-    bool negative = false;
+    int pos;
+    const char *digits;
+    bool negative;
+    int len;
+
+    pos = 0;
+    digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+    negative = false;
 
     if (is_signed && (int64_t)num < 0) {
         negative = true;
@@ -86,7 +99,7 @@ static void format_number(char **buf, size_t *rem, uint64_t num, int base, int w
         temp[pos++] = '-';
     }
 
-    int len = pos;
+    len = pos;
 
     if (!left_align) {
         while (len < width && *rem > 1) {
@@ -115,23 +128,31 @@ static void format_number(char **buf, size_t *rem, uint64_t num, int base, int w
 }
 
 int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
+    char *buf;
+    size_t rem;
+
     if (!str || size == 0) return 0;
 
-    char *buf = str;
-    size_t rem = size;
+    buf = str;
+    rem = size;
 
     while (*format && rem > 1) {
+        bool left_align;
+        char pad_char;
+        int width;
+        bool is_long;
+
         if (*format != '%') {
             *buf++ = *format++;
             rem--;
             continue;
         }
 
-        format++; // Skip '%'
+        format++; /* Skip '%' */
 
-        bool left_align = false;
-        char pad_char = ' ';
-        int width = 0;
+        left_align = false;
+        pad_char = ' ';
+        width = 0;
 
         if (*format == '-') {
             left_align = true;
@@ -148,7 +169,8 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
             format++;
         }
 
-        bool is_long = false; (void)is_long;
+        is_long = false;
+        (void)is_long;
         if (*format == 'l') {
             is_long = true;
             format++;
@@ -159,7 +181,8 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
 
         switch (*format) {
             case 'c': {
-                char c = (char)va_arg(ap, int);
+                char c;
+                c = (char)va_arg(ap, int);
                 if (rem > 1) {
                     *buf++ = c;
                     rem--;
@@ -167,9 +190,11 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
                 break;
             }
             case 's': {
-                const char *s = va_arg(ap, const char*);
+                const char *s;
+                int slen;
+                s = va_arg(ap, const char*);
                 if (!s) s = "(null)";
-                int slen = strlen(s);
+                slen = strlen(s);
 
                 if (!left_align) {
                     while (slen < width && rem > 1) {
@@ -195,27 +220,32 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
             }
             case 'd':
             case 'i': {
-                int32_t val = va_arg(ap, int32_t);
+                int32_t val;
+                val = va_arg(ap, int32_t);
                 format_number(&buf, &rem, (uint64_t)val, 10, width, pad_char, false, true, left_align);
                 break;
             }
             case 'u': {
-                uint32_t val = va_arg(ap, uint32_t);
+                uint32_t val;
+                val = va_arg(ap, uint32_t);
                 format_number(&buf, &rem, val, 10, width, pad_char, false, false, left_align);
                 break;
             }
             case 'x': {
-                uint32_t val = va_arg(ap, uint32_t);
+                uint32_t val;
+                val = va_arg(ap, uint32_t);
                 format_number(&buf, &rem, val, 16, width, pad_char, false, false, left_align);
                 break;
             }
             case 'X': {
-                uint32_t val = va_arg(ap, uint32_t);
+                uint32_t val;
+                val = va_arg(ap, uint32_t);
                 format_number(&buf, &rem, val, 16, width, pad_char, true, false, left_align);
                 break;
             }
             case 'p': {
-                uintptr_t val = (uintptr_t)va_arg(ap, void*);
+                uintptr_t val;
+                val = (uintptr_t)va_arg(ap, void*);
                 if (rem > 3) {
                     *buf++ = '0'; rem--;
                     *buf++ = 'x'; rem--;
@@ -246,16 +276,18 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
 
 int snprintf(char *str, size_t size, const char *format, ...) {
     va_list ap;
+    int ret;
     va_start(ap, format);
-    int ret = vsnprintf(str, size, format, ap);
+    ret = vsnprintf(str, size, format, ap);
     va_end(ap);
     return ret;
 }
 
 int sprintf(char *str, const char *format, ...) {
     va_list ap;
+    int ret;
     va_start(ap, format);
-    int ret = vsnprintf(str, 1024, format, ap);
+    ret = vsnprintf(str, 1024, format, ap);
     va_end(ap);
     return ret;
 }
@@ -274,11 +306,12 @@ void kprintf(const char *format, ...) {
 void kprint_color(uint8_t color, const char *format, ...) {
     char buf[512];
     va_list ap;
+    uint8_t old_color;
     va_start(ap, format);
     vsnprintf(buf, sizeof(buf), format, ap);
     va_end(ap);
 
-    uint8_t old_color = vga_get_color();
+    old_color = vga_get_color();
     vga_set_color(color);
     vga_puts(buf);
     vga_set_color(old_color);
@@ -287,10 +320,14 @@ void kprint_color(uint8_t color, const char *format, ...) {
 }
 
 void hexdump(const void *data, size_t size) {
-    const uint8_t *p = (const uint8_t*)data;
-    for (size_t i = 0; i < size; i += 16) {
+    const uint8_t *p;
+    size_t i;
+    size_t j;
+
+    p = (const uint8_t*)data;
+    for (i = 0; i < size; i += 16) {
         kprintf("%04x: ", (uint32_t)i);
-        for (size_t j = 0; j < 16; j++) {
+        for (j = 0; j < 16; j++) {
             if (i + j < size) {
                 kprintf("%02x ", p[i + j]);
             } else {
@@ -298,9 +335,10 @@ void hexdump(const void *data, size_t size) {
             }
         }
         kprintf(" |");
-        for (size_t j = 0; j < 16; j++) {
+        for (j = 0; j < 16; j++) {
             if (i + j < size) {
-                char c = (char)p[i + j];
+                char c;
+                c = (char)p[i + j];
                 kprintf("%c", (c >= 32 && c <= 126) ? c : '.');
             }
         }

@@ -33,7 +33,7 @@ struct fat_bpb {
     uint16_t num_heads;
     uint32_t hidden_sectors;
     uint32_t total_sectors_32;
-    // FAT32 Extended Fields (starting at offset 36)
+    /* FAT32 Extended Fields (starting at offset 36) */
     uint32_t fat_size_32;
     uint16_t ext_flags;
     uint16_t fs_version;
@@ -89,7 +89,7 @@ typedef struct fat_fs {
     uint32_t root_dir_sectors;
     uint32_t data_start_sector;
     uint32_t total_clusters;
-    uint32_t root_cluster; // For FAT32
+    uint32_t root_cluster; /* For FAT32 */
 } fat_fs_t;
 
 int fat_mount(block_dev_t *bdev, fat_fs_t *fs);

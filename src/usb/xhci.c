@@ -48,7 +48,8 @@ static void ring_setup_link_trb(xhci_ring_t *ring) {
 }
 
 static void xhci_ring_enqueue_trb(xhci_ring_t *ring, xhci_trb_t *trb) {
-    uint32_t idx = ring->enqueue_idx;
+    uint32_t idx;
+    idx = ring->enqueue_idx;
 
     if (idx >= ring->size - 1) {
         ring->trbs[ring->size - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | (ring->cycle ? TRB_CYCLE : 0);
@@ -63,18 +64,32 @@ static void xhci_ring_enqueue_trb(xhci_ring_t *ring, xhci_trb_t *trb) {
 }
 
 void xhci_ring_doorbell(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t target) {
-    uintptr_t db_reg = ctrl->db_base + (slot_id * 4);
+    uintptr_t db_reg;
+    db_reg = ctrl->db_base + (slot_id * 4);
     mmio_write32(db_reg, target);
 }
 
 bool xhci_init(pci_device_t *pci_dev) {
+    uint32_t bar0;
+    uint32_t rtsoff;
+    uint32_t dboff;
+    uint32_t hcs1;
+    uint32_t hcc1;
+    uint32_t usbcmd;
+    size_t dcbaa_size;
+    uint32_t hcs2;
+    uint32_t max_scratch;
+    uintptr_t rt_intr;
+    int i;
+    volatile int d;
+
     rtos_mutex_init(&g_xhci_mutex);
     memset(&g_xhci, 0, sizeof(xhci_controller_t));
     g_xhci.pci_dev = pci_dev;
 
     pci_enable_bus_mastering(pci_dev);
 
-    uint32_t bar0 = pci_read_config32(pci_dev->bus, pci_dev->slot, pci_dev->func, 0x10);
+    bar0 = pci_read_config32(pci_dev->bus, pci_dev->slot, pci_dev->func, 0x10);
     g_xhci.mmio_base = bar0 & ~0xF;
 
     kprintf("[xHCI] Initializing xHCI Host Controller (v%x.%x)\n",
@@ -86,55 +101,58 @@ bool xhci_init(pci_device_t *pci_dev) {
 
     g_xhci.op_base = g_xhci.cap_base + g_xhci.cap_length;
 
-    uint32_t rtsoff = mmio_read32(g_xhci.cap_base + XHCI_CAP_RTSOFF);
+    rtsoff = mmio_read32(g_xhci.cap_base + XHCI_CAP_RTSOFF);
     g_xhci.rt_base = g_xhci.cap_base + (rtsoff & ~0x1F);
 
-    uint32_t dboff = mmio_read32(g_xhci.cap_base + XHCI_CAP_DBOFF);
+    dboff = mmio_read32(g_xhci.cap_base + XHCI_CAP_DBOFF);
     g_xhci.db_base = g_xhci.cap_base + (dboff & ~0x3);
 
-    uint32_t hcs1 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCSPARAMS1);
+    hcs1 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCSPARAMS1);
     g_xhci.max_slots = XHCI_HCS1_MAX_SLOTS(hcs1);
     g_xhci.max_ports = XHCI_HCS1_MAX_PORTS(hcs1);
     g_xhci.max_intrs = XHCI_HCS1_MAX_INTRS(hcs1);
 
-    uint32_t hcc1 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCCPARAMS1);
+    hcc1 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCCPARAMS1);
     g_xhci.csz = XHCI_HCC1_CSZ(hcc1);
 
     kprintf("[xHCI] MaxSlots: %u, MaxPorts: %u, MaxIntrs: %u, CSZ: %u, MMIO: %p\n",
             g_xhci.max_slots, g_xhci.max_ports, g_xhci.max_intrs, g_xhci.csz, (void*)g_xhci.mmio_base);
 
-    // Stop and reset controller
-    uint32_t usbcmd = mmio_read32(g_xhci.op_base + XHCI_OP_USBCMD);
+    /* Stop and reset controller */
+    usbcmd = mmio_read32(g_xhci.op_base + XHCI_OP_USBCMD);
     usbcmd &= ~XHCI_CMD_RS;
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, usbcmd);
 
-    for (int i = 0; i < 100; i++) {
+    for (i = 0; i < 100; i++) {
         if (mmio_read32(g_xhci.op_base + XHCI_OP_USBSTS) & XHCI_STS_HCH) break;
-        for (volatile int d = 0; d < 1000; d++);
+        for (d = 0; d < 1000; d++);
     }
 
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, XHCI_CMD_HCRST);
-    for (int i = 0; i < 100; i++) {
+    for (i = 0; i < 100; i++) {
         if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBCMD) & XHCI_CMD_HCRST) == 0) break;
-        for (volatile int d = 0; d < 1000; d++);
+        for (d = 0; d < 1000; d++);
     }
 
-    // Configure Max Device Slots Enabled
+    /* Configure Max Device Slots Enabled */
     mmio_write32(g_xhci.op_base + XHCI_OP_CONFIG, g_xhci.max_slots);
 
-    // Setup DCBAA
-    size_t dcbaa_size = (g_xhci.max_slots + 1) * sizeof(uint64_t);
+    /* Setup DCBAA */
+    dcbaa_size = (g_xhci.max_slots + 1) * sizeof(uint64_t);
     g_xhci.dcbaa = (uint64_t*)kmalloc_aligned(dcbaa_size, 64);
     memset(g_xhci.dcbaa, 0, dcbaa_size);
     g_xhci.dcbaa_phys = (phys_addr_t)g_xhci.dcbaa;
 
-    uint32_t hcs2 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCSPARAMS2);
-    uint32_t max_scratch = XHCI_HCS2_MAX_SCRATCH(hcs2);
+    hcs2 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCSPARAMS2);
+    max_scratch = XHCI_HCS2_MAX_SCRATCH(hcs2);
     if (max_scratch > 0) {
-        uint64_t *scratch_array = (uint64_t*)kmalloc_aligned(max_scratch * sizeof(uint64_t), 64);
-        for (uint32_t i = 0; i < max_scratch; i++) {
-            phys_addr_t sp_page = pmm_alloc_page();
-            scratch_array[i] = (uint64_t)sp_page;
+        uint64_t *scratch_array;
+        uint32_t sc;
+        scratch_array = (uint64_t*)kmalloc_aligned(max_scratch * sizeof(uint64_t), 64);
+        for (sc = 0; sc < max_scratch; sc++) {
+            phys_addr_t sp_page;
+            sp_page = pmm_alloc_page();
+            scratch_array[sc] = (uint64_t)sp_page;
         }
         g_xhci.dcbaa[0] = (uint64_t)(phys_addr_t)scratch_array;
     }
@@ -154,7 +172,7 @@ bool xhci_init(pci_device_t *pci_dev) {
     g_xhci.erst->rsvd = 0;
     g_xhci.erst_phys = (phys_addr_t)g_xhci.erst;
 
-    uintptr_t rt_intr = g_xhci.rt_base + 0x20;
+    rt_intr = g_xhci.rt_base + 0x20;
     mmio_write32(rt_intr + XHCI_INTR_ERSTSZ, 1);
     mmio_write64(rt_intr + XHCI_INTR_ERDP, (uint64_t)g_xhci.evt_ring.phys_addr);
     mmio_write64(rt_intr + XHCI_INTR_ERSTBA, (uint64_t)g_xhci.erst_phys);
@@ -163,11 +181,11 @@ bool xhci_init(pci_device_t *pci_dev) {
 
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, XHCI_CMD_RS | XHCI_CMD_INTE);
 
-    for (int i = 0; i < 100; i++) {
+    for (i = 0; i < 100; i++) {
         if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBSTS) & XHCI_STS_HCH) == 0) {
             break;
         }
-        for (volatile int d = 0; d < 1000; d++);
+        for (d = 0; d < 1000; d++);
     }
 
     g_xhci.initialized = true;
@@ -177,9 +195,15 @@ bool xhci_init(pci_device_t *pci_dev) {
 }
 
 static xhci_trb_t *xhci_poll_event(xhci_controller_t *ctrl) {
-    xhci_trb_t *trb = &ctrl->evt_ring.trbs[ctrl->evt_ring.dequeue_idx];
-    uint32_t control = trb->control;
-    uint8_t cycle = control & TRB_CYCLE;
+    xhci_trb_t *trb;
+    uint32_t control;
+    uint8_t cycle;
+    uintptr_t rt_intr;
+    phys_addr_t erdp;
+
+    trb = &ctrl->evt_ring.trbs[ctrl->evt_ring.dequeue_idx];
+    control = trb->control;
+    cycle = control & TRB_CYCLE;
 
     if (cycle != ctrl->evt_cycle) {
         return NULL;
@@ -191,17 +215,24 @@ static xhci_trb_t *xhci_poll_event(xhci_controller_t *ctrl) {
         ctrl->evt_cycle ^= 1;
     }
 
-    uintptr_t rt_intr = ctrl->rt_base + 0x20;
-    phys_addr_t erdp = ctrl->evt_ring.phys_addr + (ctrl->evt_ring.dequeue_idx * sizeof(xhci_trb_t));
+    rt_intr = ctrl->rt_base + 0x20;
+    erdp = ctrl->evt_ring.phys_addr + (ctrl->evt_ring.dequeue_idx * sizeof(xhci_trb_t));
     mmio_write64(rt_intr + XHCI_INTR_ERDP, (uint64_t)erdp | XHCI_ERDP_EHB);
 
     return trb;
 }
 
 static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_trb_t *out_evt) {
+    xhci_ring_t *ring;
+    uint32_t idx;
+    phys_addr_t cmd_trb_phys;
+    int result;
+    uint32_t start_time;
+    uint32_t loops;
+
     xhci_lock();
-    xhci_ring_t *ring = &ctrl->cmd_ring;
-    uint32_t idx = ring->enqueue_idx;
+    ring = &ctrl->cmd_ring;
+    idx = ring->enqueue_idx;
 
     if (idx >= ring->size - 1) {
         ring->trbs[ring->size - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | (ring->cycle ? TRB_CYCLE : 0);
@@ -213,30 +244,35 @@ static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_tr
     cmd_trb->control |= (ring->cycle ? TRB_CYCLE : 0);
     memcpy((void*)&ring->trbs[idx], cmd_trb, sizeof(xhci_trb_t));
 
-    phys_addr_t cmd_trb_phys = ring->phys_addr + (idx * sizeof(xhci_trb_t));
+    cmd_trb_phys = ring->phys_addr + (idx * sizeof(xhci_trb_t));
     ring->enqueue_idx++;
 
     xhci_ring_doorbell(ctrl, 0, 0);
 
-    int result = -100;
-    uint32_t start_time = pit_get_ticks();
-    uint32_t loops = 0;
+    result = -100;
+    start_time = pit_get_ticks();
+    loops = 0;
     while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++loops < 2000000) {
-        xhci_trb_t *evt = xhci_poll_event(ctrl);
+        xhci_trb_t *evt;
+        evt = xhci_poll_event(ctrl);
         if (evt) {
-            uint8_t type = TRB_GET_TYPE(evt->control);
+            uint8_t type;
+            type = TRB_GET_TYPE(evt->control);
             if (type == TRB_TYPE_CMD_COMPLETION_EVENT) {
                 if (evt->parameter == (uint64_t)cmd_trb_phys) {
+                    uint8_t code;
                     if (out_evt) {
                         memcpy(out_evt, (const void*)evt, sizeof(xhci_trb_t));
                     }
-                    uint8_t code = TRB_GET_COMP_CODE(evt->status);
+                    code = TRB_GET_COMP_CODE(evt->status);
                     result = (code == TRB_COMP_SUCCESS) ? 0 : -(int)code;
                     break;
                 }
             } else if (type == TRB_TYPE_TRANSFER_EVENT) {
-                uint8_t ev_slot = TRB_GET_SLOT_ID(evt->control);
-                uint8_t ev_ep = TRB_GET_EP_ID(evt->control);
+                uint8_t ev_slot;
+                uint8_t ev_ep;
+                ev_slot = TRB_GET_SLOT_ID(evt->control);
+                ev_ep = TRB_GET_EP_ID(evt->control);
                 usb_hid_on_transfer_complete(ev_slot, ev_ep, evt->status);
             }
         }
@@ -248,11 +284,13 @@ static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_tr
 
 int xhci_cmd_enable_slot(xhci_controller_t *ctrl, uint8_t *slot_id_out) {
     xhci_trb_t trb;
+    xhci_trb_t evt;
+    int res;
+
     memset(&trb, 0, sizeof(trb));
     trb.control = TRB_SET_TYPE(TRB_TYPE_ENABLE_SLOT);
 
-    xhci_trb_t evt;
-    int res = xhci_submit_cmd(ctrl, &trb, &evt);
+    res = xhci_submit_cmd(ctrl, &trb, &evt);
     if (res == 0 && slot_id_out) {
         *slot_id_out = TRB_GET_SLOT_ID(evt.control);
     }
@@ -298,17 +336,21 @@ int xhci_cmd_reset_ep(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_id) {
 }
 
 void xhci_init_ep_ring(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci) {
-    xhci_slot_t *slot = &ctrl->slots[slot_id];
+    xhci_slot_t *slot;
+    slot = &ctrl->slots[slot_id];
     ring_init(&slot->ep_rings[ep_dci], XHCI_RING_SIZE);
     ring_setup_link_trb(&slot->ep_rings[ep_dci]);
 }
 
 void xhci_submit_async_trb(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool dir_in) {
-    xhci_lock();
-    xhci_slot_t *slot = &ctrl->slots[slot_id];
-    xhci_ring_t *ring = &slot->ep_rings[ep_dci];
-
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
     xhci_trb_t trb;
+
+    xhci_lock();
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[ep_dci];
+
     memset(&trb, 0, sizeof(trb));
     trb.parameter = (uint64_t)(phys_addr_t)data;
     trb.status = len;
@@ -319,16 +361,24 @@ void xhci_submit_async_trb(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_
 }
 
 int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_packet_t *setup, void *data, uint16_t len) {
-    xhci_lock();
-    xhci_slot_t *slot = &ctrl->slots[slot_id];
-    xhci_ring_t *ring = &slot->ep_rings[1];
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
+    uint32_t trt;
+    xhci_trb_t setup_trb;
+    xhci_trb_t status_trb;
+    int result;
+    uint32_t start_time;
+    uint32_t loops;
 
-    uint32_t trt = TRB_TRT_NONE;
+    xhci_lock();
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[1];
+
+    trt = TRB_TRT_NONE;
     if (len > 0) {
         trt = (setup->bmRequestType & USB_DIR_IN) ? TRB_TRT_IN : TRB_TRT_OUT;
     }
 
-    xhci_trb_t setup_trb;
     memset((void*)&setup_trb, 0, sizeof(setup_trb));
     memcpy((void*)&setup_trb.parameter, setup, sizeof(usb_setup_packet_t));
     setup_trb.status = 8;
@@ -344,7 +394,6 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
         xhci_ring_enqueue_trb(ring, &data_trb);
     }
 
-    xhci_trb_t status_trb;
     memset(&status_trb, 0, sizeof(status_trb));
     status_trb.parameter = 0;
     status_trb.status = 0;
@@ -354,18 +403,23 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
     xhci_ring_enqueue_trb(ring, &status_trb);
     xhci_ring_doorbell(ctrl, slot_id, 1);
 
-    int result = -100;
-    uint32_t start_time = pit_get_ticks();
-    uint32_t loops = 0;
+    result = -100;
+    start_time = pit_get_ticks();
+    loops = 0;
     while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++loops < 2000000) {
-        xhci_trb_t *evt = xhci_poll_event(ctrl);
+        xhci_trb_t *evt;
+        evt = xhci_poll_event(ctrl);
         if (evt) {
-            uint8_t type = TRB_GET_TYPE(evt->control);
+            uint8_t type;
+            type = TRB_GET_TYPE(evt->control);
             if (type == TRB_TYPE_TRANSFER_EVENT) {
-                uint8_t ev_slot = TRB_GET_SLOT_ID(evt->control);
-                uint8_t ev_ep = TRB_GET_EP_ID(evt->control);
+                uint8_t ev_slot;
+                uint8_t ev_ep;
+                ev_slot = TRB_GET_SLOT_ID(evt->control);
+                ev_ep = TRB_GET_EP_ID(evt->control);
                 if (ev_slot == slot_id && ev_ep == 1) {
-                    uint8_t code = TRB_GET_COMP_CODE(evt->status);
+                    uint8_t code;
+                    code = TRB_GET_COMP_CODE(evt->status);
                     result = (code == TRB_COMP_SUCCESS || code == TRB_COMP_SHORT_PACKET) ? 0 : -(int)code;
                     break;
                 } else {
@@ -380,11 +434,17 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
 }
 
 int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool dir_in) {
-    xhci_lock();
-    xhci_slot_t *slot = &ctrl->slots[slot_id];
-    xhci_ring_t *ring = &slot->ep_rings[ep_dci];
-
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
     xhci_trb_t trb;
+    int result;
+    uint32_t start_time;
+    uint32_t bulk_loops;
+
+    xhci_lock();
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[ep_dci];
+
     memset(&trb, 0, sizeof(trb));
     trb.parameter = (uint64_t)(phys_addr_t)data;
     trb.status = len;
@@ -393,18 +453,23 @@ int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci,
     xhci_ring_enqueue_trb(ring, &trb);
     xhci_ring_doorbell(ctrl, slot_id, ep_dci);
 
-    int result = -100;
-    uint32_t start_time = pit_get_ticks();
-    uint32_t bulk_loops = 0;
+    result = -100;
+    start_time = pit_get_ticks();
+    bulk_loops = 0;
     while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++bulk_loops < 2000000) {
-        xhci_trb_t *evt = xhci_poll_event(ctrl);
+        xhci_trb_t *evt;
+        evt = xhci_poll_event(ctrl);
         if (evt) {
-            uint8_t type = TRB_GET_TYPE(evt->control);
+            uint8_t type;
+            type = TRB_GET_TYPE(evt->control);
             if (type == TRB_TYPE_TRANSFER_EVENT) {
-                uint8_t ev_slot = TRB_GET_SLOT_ID(evt->control);
-                uint8_t ev_ep = TRB_GET_EP_ID(evt->control);
+                uint8_t ev_slot;
+                uint8_t ev_ep;
+                ev_slot = TRB_GET_SLOT_ID(evt->control);
+                ev_ep = TRB_GET_EP_ID(evt->control);
                 if (ev_slot == slot_id && ev_ep == ep_dci) {
-                    uint8_t code = TRB_GET_COMP_CODE(evt->status);
+                    uint8_t code;
+                    code = TRB_GET_COMP_CODE(evt->status);
                     result = (code == TRB_COMP_SUCCESS || code == TRB_COMP_SHORT_PACKET) ? (int)(len - TRB_GET_REMAINDER(evt->status)) : -(int)code;
                     break;
                 } else {
@@ -423,30 +488,39 @@ int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep
 }
 
 void xhci_scan_ports(xhci_controller_t *ctrl) {
-    for (uint8_t port = 1; port <= ctrl->max_ports; port++) {
-        uintptr_t portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
-        uint32_t portsc = mmio_read32(portsc_reg);
+    uint8_t port;
+    for (port = 1; port <= ctrl->max_ports; port++) {
+        uintptr_t portsc_reg;
+        uint32_t portsc;
+
+        portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
+        portsc = mmio_read32(portsc_reg);
 
         if (portsc & XHCI_PORTSC_CCS) {
+            int i;
+            volatile int d;
+            uint8_t speed;
+            uint8_t slot_id;
+
             kprintf("[xHCI] Port %u: Device detected. Resetting port...\n", port);
 
             mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PR);
 
-            for (int i = 0; i < 200; i++) {
+            for (i = 0; i < 200; i++) {
                 portsc = mmio_read32(portsc_reg);
                 if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
                     break;
                 }
-                for (volatile int d = 0; d < 10000; d++);
+                for (d = 0; d < 10000; d++);
             }
 
             mmio_write32(portsc_reg, portsc);
 
-            uint8_t speed = XHCI_PORTSC_SPEED(portsc);
+            speed = XHCI_PORTSC_SPEED(portsc);
             kprintf("[xHCI] Port %u: Reset complete. Speed = %s (%u)\n",
                     port, usb_speed_to_string(speed), speed);
 
-            uint8_t slot_id = 0;
+            slot_id = 0;
             if (xhci_cmd_enable_slot(ctrl, &slot_id) == 0 && slot_id > 0) {
                 kprintf("[xHCI] Allocated Slot ID %u for Port %u\n", slot_id, port);
                 usb_enumerate_device(ctrl, slot_id, speed, port, 0, 0, 0);
@@ -458,16 +532,20 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
 }
 
 void xhci_poll(void) {
-    xhci_lock();
     xhci_trb_t *evt;
+    xhci_lock();
     while ((evt = xhci_poll_event(&g_xhci)) != NULL) {
-        uint8_t type = TRB_GET_TYPE(evt->control);
+        uint8_t type;
+        type = TRB_GET_TYPE(evt->control);
         if (type == TRB_TYPE_TRANSFER_EVENT) {
-            uint8_t ev_slot = TRB_GET_SLOT_ID(evt->control);
-            uint8_t ev_ep = TRB_GET_EP_ID(evt->control);
+            uint8_t ev_slot;
+            uint8_t ev_ep;
+            ev_slot = TRB_GET_SLOT_ID(evt->control);
+            ev_ep = TRB_GET_EP_ID(evt->control);
             usb_hid_on_transfer_complete(ev_slot, ev_ep, evt->status);
         } else if (type == TRB_TYPE_PORT_STATUS_CHANGE) {
-            uint8_t port_id = (evt->parameter >> 24) & 0xFF;
+            uint8_t port_id;
+            port_id = (evt->parameter >> 24) & 0xFF;
             kprintf("[xHCI Event] Port %u status change\n", port_id);
         }
     }
