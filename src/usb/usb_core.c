@@ -1,0 +1,375 @@
+/*
+ * This is free and unencumbered software released into the public domain.
+ * GEMOS Preemptive Real-Time Operating System
+ */
+
+#include "usb_core.h"
+#include "usb_hub.h"
+#include "usb_hid.h"
+#include "usb_msc.h"
+#include "heap.h"
+#include "string.h"
+
+static usb_device_t usb_devices[USB_MAX_DEVICES];
+static size_t usb_device_count = 0;
+
+const char *usb_speed_to_string(uint8_t speed) {
+    switch (speed) {
+        case USB_SPEED_LOW:        return "Low-Speed (1.5 Mbps)";
+        case USB_SPEED_FULL:       return "Full-Speed (12 Mbps)";
+        case USB_SPEED_HIGH:       return "High-Speed (480 Mbps)";
+        case USB_SPEED_SUPER:      return "SuperSpeed (5 Gbps)";
+        case USB_SPEED_SUPER_PLUS: return "SuperSpeed+ (10 Gbps)";
+        default:                   return "Unknown Speed";
+    }
+}
+
+const char *usb_class_to_string(uint8_t class_code) {
+    switch (class_code) {
+        case USB_CLASS_PER_INTERFACE: return "Interface-Specific";
+        case USB_CLASS_AUDIO:         return "Audio";
+        case USB_CLASS_COMM:          return "Communications";
+        case USB_CLASS_HID:           return "Human Interface Device (HID)";
+        case USB_CLASS_MASS_STORAGE:  return "Mass Storage";
+        case USB_CLASS_HUB:           return "USB Hub";
+        case USB_CLASS_DATA:          return "Data";
+        case USB_CLASS_VENDOR_SPEC:   return "Vendor-Specific";
+        default:                      return "Other";
+    }
+}
+
+void usb_core_init(void) {
+    memset(usb_devices, 0, sizeof(usb_devices));
+    usb_device_count = 0;
+}
+
+usb_device_t *usb_create_device(uint8_t slot_id, uint8_t speed, uint8_t root_port) {
+    for (size_t i = 0; i < USB_MAX_DEVICES; i++) {
+        if (!usb_devices[i].active) {
+            memset(&usb_devices[i], 0, sizeof(usb_device_t));
+            usb_devices[i].slot_id = slot_id;
+            usb_devices[i].speed = speed;
+            usb_devices[i].root_port = root_port;
+            usb_devices[i].active = true;
+            usb_device_count++;
+            return &usb_devices[i];
+        }
+    }
+    return NULL;
+}
+
+void usb_remove_device(uint8_t slot_id) {
+    for (size_t i = 0; i < USB_MAX_DEVICES; i++) {
+        if (usb_devices[i].active && usb_devices[i].slot_id == slot_id) {
+            if (usb_devices[i].raw_config_desc) {
+                kfree(usb_devices[i].raw_config_desc);
+            }
+            usb_devices[i].active = false;
+            usb_device_count--;
+            break;
+        }
+    }
+}
+
+usb_device_t *usb_get_device_by_slot(uint8_t slot_id) {
+    for (size_t i = 0; i < USB_MAX_DEVICES; i++) {
+        if (usb_devices[i].active && usb_devices[i].slot_id == slot_id) {
+            return &usb_devices[i];
+        }
+    }
+    return NULL;
+}
+
+size_t usb_get_device_count(void) {
+    return usb_device_count;
+}
+
+usb_device_t *usb_get_device_by_index(size_t index) {
+    size_t count = 0;
+    for (size_t i = 0; i < USB_MAX_DEVICES; i++) {
+        if (usb_devices[i].active) {
+            if (count == index) {
+                return &usb_devices[i];
+            }
+            count++;
+        }
+    }
+    return NULL;
+}
+
+int usb_control_msg(usb_device_t *dev, uint8_t req_type, uint8_t request, uint16_t value, uint16_t index, void *data, uint16_t len) {
+    usb_setup_packet_t setup;
+    setup.bmRequestType = req_type;
+    setup.bRequest = request;
+    setup.wValue = value;
+    setup.wIndex = index;
+    setup.wLength = len;
+
+    xhci_controller_t *ctrl = xhci_get_controller();
+    return xhci_control_transfer(ctrl, dev->slot_id, &setup, data, len);
+}
+
+int usb_get_descriptor(usb_device_t *dev, uint8_t desc_type, uint8_t desc_index, void *data, uint16_t len) {
+    return usb_control_msg(dev, USB_REQ_TYPE_STANDARD | USB_DIR_IN | USB_REQ_RECIPIENT_DEVICE,
+                           USB_REQ_GET_DESCRIPTOR,
+                           (desc_type << 8) | desc_index,
+                           0, data, len);
+}
+
+int usb_set_configuration(usb_device_t *dev, uint8_t config_val) {
+    return usb_control_msg(dev, USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_DEVICE,
+                           USB_REQ_SET_CONFIGURATION,
+                           config_val, 0, NULL, 0);
+}
+
+static void ring_init(xhci_ring_t *ring, uint32_t size) {
+    ring->size = size;
+    ring->enqueue_idx = 0;
+    ring->dequeue_idx = 0;
+    ring->cycle = 1;
+
+    size_t bytes = size * sizeof(xhci_trb_t);
+    ring->trbs = (xhci_trb_t*)kmalloc_aligned(bytes, 64);
+    memset(ring->trbs, 0, bytes);
+    ring->phys_addr = (phys_addr_t)ring->trbs;
+
+    uint32_t last = ring->size - 1;
+    ring->trbs[last].parameter = (uint64_t)ring->phys_addr;
+    ring->trbs[last].status = 0;
+    ring->trbs[last].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | (ring->cycle ? TRB_CYCLE : 0);
+}
+
+int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed, uint8_t root_port, uint8_t parent_hub_slot, uint8_t parent_port, uint32_t route_string) {
+    xhci_slot_t *slot = &ctrl->slots[slot_id];
+    memset(slot, 0, sizeof(xhci_slot_t));
+
+    slot->enabled = true;
+    slot->slot_id = slot_id;
+    slot->speed = speed;
+    slot->root_port = root_port;
+    slot->parent_hub_slot = parent_hub_slot;
+    slot->parent_port = parent_port;
+    slot->route_string = route_string;
+
+    // 1. Allocate Device Context
+    slot->dev_ctx = (xhci_device_ctx_t*)kmalloc_aligned(sizeof(xhci_device_ctx_t), 64);
+    memset(slot->dev_ctx, 0, sizeof(xhci_device_ctx_t));
+    slot->dev_ctx_phys = (phys_addr_t)slot->dev_ctx;
+    ctrl->dcbaa[slot_id] = (uint64_t)slot->dev_ctx_phys;
+
+    // 2. Allocate EP0 Transfer Ring
+    ring_init(&slot->ep_rings[1], XHCI_RING_SIZE);
+
+    // 3. Prepare Input Context for Address Device
+    xhci_input_ctx_t *input_ctx = (xhci_input_ctx_t*)kmalloc_aligned(sizeof(xhci_input_ctx_t), 64);
+    memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
+
+    input_ctx->ctrl.add_flags = (1 << 0) | (1 << 1); // Add Slot Context and EP0 Context
+
+    // Slot Context
+    uint32_t context_entries = 1;
+    bool is_hub = false; // Initial
+    input_ctx->slot.info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) | (context_entries << 27);
+    input_ctx->slot.info2 = (root_port << 16);
+
+    if (parent_hub_slot != 0) {
+        input_ctx->slot.info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
+    }
+
+    // Default EP0 Max Packet Size
+    uint16_t ep0_max_packet = 8;
+    if (speed == USB_SPEED_FULL || speed == USB_SPEED_HIGH) {
+        ep0_max_packet = 64;
+    } else if (speed == USB_SPEED_SUPER || speed == USB_SPEED_SUPER_PLUS) {
+        ep0_max_packet = 512;
+    }
+
+    // EP0 Context (DCI 1 -> ep[0])
+    input_ctx->ep[0].info1 = (0 << 16); // Interval = 0
+    input_ctx->ep[0].info2 = (3 << 1) | (4 << 3) | (ep0_max_packet << 16); // CErr=3, EP Type=4 (Control), MaxPacket
+    input_ctx->ep[0].tr_dequeue_ptr = (uint64_t)slot->ep_rings[1].phys_addr | 1; // DCS=1
+    input_ctx->ep[0].tx_info = (8 & 0xFFFF); // Average TRB length
+
+    // 4. Send Address Device command
+    int res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, false);
+    if (res != 0) {
+        kprint_color(0x4F, "[USB] Address Device failed on Slot %u (err %d)\n", slot_id, res);
+        kfree(input_ctx);
+        return res;
+    }
+
+    usb_device_t *dev = usb_create_device(slot_id, speed, root_port);
+    if (!dev) {
+        kfree(input_ctx);
+        return -1;
+    }
+    dev->parent_hub_slot = parent_hub_slot;
+    dev->parent_port = parent_port;
+    dev->route_string = route_string;
+    slot->usb_dev = dev;
+
+    // 5. Get 18-byte Device Descriptor
+    res = usb_get_descriptor(dev, USB_DESC_DEVICE, 0, &dev->dev_desc, sizeof(usb_device_descriptor_t));
+    if (res != 0) {
+        kprint_color(0x4F, "[USB] Get Device Descriptor failed on Slot %u (err %d)\n", slot_id, res);
+        kfree(input_ctx);
+        return res;
+    }
+
+    kprintf("[USB] Slot %u: VID=0x%04x PID=0x%04x Class=0x%02x Sub=0x%02x Proto=0x%02x MaxPkt0=%u\n",
+            slot_id, dev->dev_desc.idVendor, dev->dev_desc.idProduct,
+            dev->dev_desc.bDeviceClass, dev->dev_desc.bDeviceSubClass, dev->dev_desc.bDeviceProtocol,
+            dev->dev_desc.bMaxPacketSize0);
+
+    // If EP0 max packet size is different, update using Evaluate Context
+    if (dev->dev_desc.bMaxPacketSize0 != ep0_max_packet && dev->dev_desc.bMaxPacketSize0 > 0) {
+        memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
+        input_ctx->ctrl.add_flags = (1 << 1); // Add EP0
+        input_ctx->ep[0].info2 = (3 << 1) | (4 << 3) | (dev->dev_desc.bMaxPacketSize0 << 16);
+        xhci_cmd_evaluate_ctx(ctrl, slot_id, input_ctx);
+    }
+
+    // 6. Get Configuration Descriptor header to find wTotalLength
+    usb_config_descriptor_t cfg_hdr;
+    res = usb_get_descriptor(dev, USB_DESC_CONFIGURATION, 0, &cfg_hdr, sizeof(cfg_hdr));
+    if (res != 0) {
+        kprint_color(0x4F, "[USB] Get Config Descriptor header failed on Slot %u (err %d)\n", slot_id, res);
+        kfree(input_ctx);
+        return res;
+    }
+
+    dev->raw_config_len = cfg_hdr.wTotalLength;
+    dev->raw_config_desc = (uint8_t*)kmalloc(dev->raw_config_len);
+    dev->cfg_desc = cfg_hdr;
+
+    res = usb_get_descriptor(dev, USB_DESC_CONFIGURATION, 0, dev->raw_config_desc, dev->raw_config_len);
+    if (res != 0) {
+        kprint_color(0x4F, "[USB] Get Full Config Descriptor failed on Slot %u (err %d)\n", slot_id, res);
+        kfree(input_ctx);
+        return res;
+    }
+
+    // 7. Parse Interfaces and Endpoints
+    uint8_t *p = dev->raw_config_desc;
+    uint8_t *end = p + dev->raw_config_len;
+    usb_interface_t *cur_iface = NULL;
+    uint8_t max_dci = 1;
+
+    memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
+    input_ctx->ctrl.add_flags = (1 << 0); // Slot context
+
+    while (p < end) {
+        uint8_t len = p[0];
+        uint8_t type = p[1];
+
+        if (len == 0 || p + len > end) break;
+
+        if (type == USB_DESC_INTERFACE) {
+            usb_interface_descriptor_t *if_desc = (usb_interface_descriptor_t*)p;
+            if (dev->num_interfaces < USB_MAX_INTERFACES) {
+                cur_iface = &dev->interfaces[dev->num_interfaces++];
+                cur_iface->interface_number = if_desc->bInterfaceNumber;
+                cur_iface->interface_class = if_desc->bInterfaceClass;
+                cur_iface->interface_subclass = if_desc->bInterfaceSubClass;
+                cur_iface->interface_protocol = if_desc->bInterfaceProtocol;
+                cur_iface->num_endpoints = 0;
+
+                kprintf("[USB] Slot %u: Interface %u Class=0x%02x Sub=0x%02x Proto=0x%02x (%s)\n",
+                        slot_id, cur_iface->interface_number, cur_iface->interface_class,
+                        cur_iface->interface_subclass, cur_iface->interface_protocol,
+                        usb_class_to_string(cur_iface->interface_class));
+            }
+        } else if (type == USB_DESC_ENDPOINT && cur_iface) {
+            usb_endpoint_descriptor_t *ep_desc = (usb_endpoint_descriptor_t*)p;
+            if (cur_iface->num_endpoints < USB_MAX_ENDPOINTS) {
+                usb_endpoint_t *ep = &cur_iface->endpoints[cur_iface->num_endpoints++];
+                ep->address = ep_desc->bEndpointAddress;
+                ep->attributes = ep_desc->bmAttributes;
+                ep->max_packet_size = ep_desc->wMaxPacketSize;
+                ep->interval = ep_desc->bInterval;
+
+                uint8_t ep_num = ep->address & 0x0F;
+                bool dir_in = (ep->address & USB_DIR_IN) != 0;
+                uint8_t dci = (ep_num * 2) + (dir_in ? 1 : 0);
+                ep->dci = dci;
+
+                if (dci > max_dci) max_dci = dci;
+
+                // Allocate Transfer Ring for endpoint
+                ring_init(&slot->ep_rings[dci], XHCI_RING_SIZE);
+
+                // Setup Endpoint Context in Input Context
+                input_ctx->ctrl.add_flags |= (1 << dci);
+
+                uint8_t ep_type = 0;
+                uint8_t xfer_type = ep->attributes & 0x03;
+                if (xfer_type == 0) ep_type = 4; // Control
+                else if (xfer_type == 1) ep_type = dir_in ? 5 : 1; // Isoch
+                else if (xfer_type == 2) ep_type = dir_in ? 6 : 2; // Bulk
+                else if (xfer_type == 3) ep_type = dir_in ? 7 : 3; // Interrupt
+
+                uint8_t interval = ep->interval;
+                if (speed == USB_SPEED_FULL || speed == USB_SPEED_LOW) {
+                    // In xHCI interval is encoded as 2^(interval-1)*125us
+                    // For FS/LS interrupt, ep->interval is in 1ms frames -> log2(interval) + 3
+                    interval = 3; // ~1ms default
+                }
+
+                input_ctx->ep[dci - 1].info1 = (interval << 16);
+                input_ctx->ep[dci - 1].info2 = (3 << 1) | (ep_type << 3) | (ep->max_packet_size << 16);
+                input_ctx->ep[dci - 1].tr_dequeue_ptr = (uint64_t)slot->ep_rings[dci].phys_addr | 1;
+                input_ctx->ep[dci - 1].tx_info = (ep->max_packet_size & 0xFFFF);
+
+                kprintf("[USB]   Endpoint 0x%02x (DCI %u): Type=%u MaxPacket=%u Interval=%u\n",
+                        ep->address, dci, ep_type, ep->max_packet_size, ep->interval);
+            }
+        }
+
+        p += len;
+    }
+
+    // Update context entries in slot context
+    is_hub = (dev->dev_desc.bDeviceClass == USB_CLASS_HUB) ||
+             (dev->num_interfaces > 0 && dev->interfaces[0].interface_class == USB_CLASS_HUB);
+
+    input_ctx->slot.info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) |
+                           (is_hub ? (1 << 26) : 0) | (max_dci << 27);
+    input_ctx->slot.info2 = (root_port << 16);
+    if (parent_hub_slot != 0) {
+        input_ctx->slot.info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
+    }
+
+    // 8. Configure Endpoints
+    if (max_dci > 1) {
+        res = xhci_cmd_configure_ep(ctrl, slot_id, input_ctx);
+        if (res != 0) {
+            kprint_color(0x4F, "[USB] Configure Endpoint failed on Slot %u (err %d)\n", slot_id, res);
+        }
+    }
+
+    kfree(input_ctx);
+
+    // 9. Send Set Configuration
+    res = usb_set_configuration(dev, dev->cfg_desc.bConfigurationValue);
+    if (res != 0) {
+        kprint_color(0x4F, "[USB] Set Configuration failed on Slot %u (err %d)\n", slot_id, res);
+        return res;
+    }
+
+    // 10. Attach Drivers
+    if (is_hub) {
+        snprintf(dev->name, sizeof(dev->name), "USB Hub");
+        usb_hub_init_device(dev);
+    } else {
+        for (uint8_t i = 0; i < dev->num_interfaces; i++) {
+            usb_interface_t *iface = &dev->interfaces[i];
+            if (iface->interface_class == USB_CLASS_HID) {
+                usb_hid_init_device(dev, iface);
+            } else if (iface->interface_class == USB_CLASS_MASS_STORAGE) {
+                usb_msc_init_device(dev, iface);
+            }
+        }
+    }
+
+    return 0;
+}
