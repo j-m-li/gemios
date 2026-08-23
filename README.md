@@ -1,5 +1,7 @@
 # GEMIOS: 32-bit x86 Preemptive RTOS with USB xHCI Support
 
+agy -c
+
 **GEMIOS** is a bare-metal, preemptive Real-Time Operating System (RTOS) for x86 32-bit (i686) systems compiled with LLVM/Clang. It features a USB 3.0/2.0 xHCI host controller stack, USB HID Keyboard & Mouse drivers, USB Mass Storage (BOT/SCSI) driver, USB Hub support with cascaded device routing, FAT filesystem support, and an interactive real-time shell with command history.
 
 All code is dedicated to the **Public Domain** (UNLICENSE).
