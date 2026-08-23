@@ -581,7 +581,7 @@ int main(int argc, char **argv) {
                         uint8_t *loc = out_sec->data + in_sec_offset + rel->r_offset;
                         int32_t A = 0;
 
-                        if (ELF32_ST_BIND(sym->st_info) == STB_LOCAL) {
+                        if (ELF32_ST_BIND(sym->st_info) == STB_LOCAL && sym->st_shndx != SHN_UNDEF) {
                             if (sym->st_shndx == SHN_ABS) {
                                 S = sym->st_value;
                             } else if (in->sec_map[sym->st_shndx].out_sec_idx >= 0) {

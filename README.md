@@ -60,6 +60,7 @@ All code is dedicated to the **Public Domain** (UNLICENSE).
 ## 🛠️ Toolchain & Requirements
 
 - **Compiler**: `clang` (with 32-bit x86 target support)
+- **Assembler**: Built-in self-hosted 32-bit x86 assembler (`tools/as.c`, replaces clang/gas for `.s`/`.S`)
 - **Linker**: Built-in self-hosted ELF32 static linker (`tools/ld.c`, replaces `ld.lld`)
 - **Disk Utilities**: Built-in self-hosted C tools (`tools/mkfs_fat.c` and `tools/mcopy.c`, no external `mtools`/`dosfstools` required)
 - **Emulator**: `qemu-system-i386` or `qemu-system-x86_64`

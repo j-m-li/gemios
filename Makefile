@@ -19,6 +19,7 @@ TOOLS_DIR = $(BUILD_DIR)/tools
 MKFS_FAT = $(TOOLS_DIR)/mkfs.fat
 MCOPY = $(TOOLS_DIR)/mcopy
 LD = $(TOOLS_DIR)/ld
+AS = $(TOOLS_DIR)/as
 
 C_SRCS = $(shell find src -name '*.c')
 ASM_CAP_SRCS = $(shell find src -name '*.S')
@@ -36,7 +37,12 @@ FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
 
-tools: $(MKFS_FAT) $(MCOPY) $(LD)
+tools: $(MKFS_FAT) $(MCOPY) $(LD) $(AS)
+
+$(AS): tools/as.c
+	@mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
 
 $(LD): tools/ld.c
 	@mkdir -p $(@D)
@@ -63,14 +69,14 @@ $(BUILD_DIR)/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "[CC] $<"
 
-$(BUILD_DIR)/%.o: src/%.S
+$(BUILD_DIR)/%.o: src/%.S $(AS)
 	@mkdir -p $(@D)
-	$(CC) $(ASFLAGS) -c $< -o $@
+	$(AS) $< -o $@
 	@echo "[AS] $<"
 
-$(BUILD_DIR)/%.o: src/%.s
+$(BUILD_DIR)/%.o: src/%.s $(AS)
 	@mkdir -p $(@D)
-	$(CC) $(ASFLAGS) -c $< -o $@
+	$(AS) $< -o $@
 	@echo "[AS] $<"
 
 $(DISK_IMG): $(MKFS_FAT) $(MCOPY)
