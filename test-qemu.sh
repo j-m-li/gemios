@@ -49,8 +49,8 @@ commands = [
     'lsusb',
     'storage',
     'readsec usb0 0',
-    'fatls usb0',
-    'fatcat usb0 README.TXT',
+    'ls usb0',
+    'cat usb0 README.TXT',
     'mouse',
     'uptime'
 ]

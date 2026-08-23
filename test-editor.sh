@@ -87,7 +87,7 @@ wait_for(b'[EDITOR] Exited editor', timeout=5.0)
 
 # 6. Verify file was created in FAT directory
 prompt_idx = len(all_output)
-proc.stdin.write(b'fatls usb0\n')
+proc.stdin.write(b'ls usb0\n')
 proc.stdin.flush()
 start = time.time()
 while time.time() - start < 5.0:
@@ -95,9 +95,9 @@ while time.time() - start < 5.0:
     if b'gemios> ' in all_output[prompt_idx:]:
         break
 
-# 7. Read back file contents using fatcat
+# 7. Read back file contents using cat
 prompt_idx = len(all_output)
-proc.stdin.write(b'fatcat usb0 NEWFILE.TXT\n')
+proc.stdin.write(b'cat usb0 NEWFILE.TXT\n')
 proc.stdin.flush()
 start = time.time()
 while time.time() - start < 5.0:

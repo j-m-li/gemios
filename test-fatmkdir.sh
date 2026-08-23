@@ -80,12 +80,12 @@ def send_cmd(cmd_str):
 
 wait_prompt(timeout=6.0)
 
-send_cmd('fatls usb0\n')
-send_cmd('fatmkdir usb0 TESTDIR\n')
-send_cmd('fatls usb0\n')
-send_cmd('fatmkdir usb0 TESTDIR\n')
-send_cmd('fatmkdir usb0 DOCS\n')
-send_cmd('fatls usb0\n')
+send_cmd('ls usb0\n')
+send_cmd('mkdir usb0 TESTDIR\n')
+send_cmd('ls usb0\n')
+send_cmd('mkdir usb0 TESTDIR\n')
+send_cmd('mkdir usb0 DOCS\n')
+send_cmd('ls usb0\n')
 
 read_more(1.5)
 proc.terminate()
@@ -159,10 +159,10 @@ def send_cmd(cmd_str):
 
 wait_prompt(timeout=6.0)
 
-send_cmd('fatls usb0\n')
-send_cmd('fatmkdir usb0 FAT32DIR\n')
-send_cmd('fatls usb0\n')
-send_cmd('fatmkdir usb0 FAT32DIR\n')
+send_cmd('ls usb0\n')
+send_cmd('mkdir usb0 FAT32DIR\n')
+send_cmd('ls usb0\n')
+send_cmd('mkdir usb0 FAT32DIR\n')
 
 read_more(1.5)
 proc.terminate()

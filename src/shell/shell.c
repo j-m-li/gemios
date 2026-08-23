@@ -73,9 +73,10 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  writesec <dev> <lba> <s> - Write text into a block on storage\n");
     kprintf("  cd [dev] [dir]        - Change current directory on FAT filesystem\n");
     kprintf("  pwd                   - Print current working directory\n");
-    kprintf("  fatls [dev] [dir]     - List directory contents on FAT (default: usb0)\n");
-    kprintf("  fatcat [dev] <path>   - Read file content from FAT (default: usb0)\n");
-    kprintf("  fatmkdir [dev] <dir>  - Create a directory in FAT filesystem\n");
+    kprintf("  ls [dev] [dir]        - List directory contents on FAT (default: usb0)\n");
+    kprintf("  cat [dev] <path>      - Read file content from FAT (default: usb0)\n");
+    kprintf("  mkdir [dev] <dir>     - Create a directory in FAT filesystem\n");
+    kprintf("  rm [-r] [dev] <path>  - Remove files or directories (e.g. rm -r *)\n");
     kprintf("  edit [dev] <path>     - Fullscreen MS-DOS style UTF-8 text editor\n");
     kprintf("  mouse                 - Show current USB mouse coordinates\n");
     kprintf("  bench                 - Run RTOS context-switch benchmark\n");
@@ -385,7 +386,7 @@ static void cmd_pwd(int argc, char **argv) {
     kprintf("%s:%s\n", g_shell_dev, g_shell_cwd);
 }
 
-static void cmd_fatls(int argc, char **argv) {
+static void cmd_ls(int argc, char **argv) {
     const char *dev_name = g_shell_dev;
     const char *target = g_shell_cwd;
 
@@ -443,7 +444,7 @@ static void cmd_fatls(int argc, char **argv) {
     }
 }
 
-static void cmd_fatcat(int argc, char **argv) {
+static void cmd_cat(int argc, char **argv) {
     const char *dev_name = g_shell_dev;
     const char *filename = NULL;
 
@@ -453,7 +454,7 @@ static void cmd_fatcat(int argc, char **argv) {
         dev_name = argv[1];
         filename = argv[2];
     } else {
-        kprintf("Usage: fatcat [dev] <filename>\nExample: fatcat README.TXT or fatcat usb0 README.TXT\n");
+        kprintf("Usage: cat [dev] <filename>\nExample: cat README.TXT or cat usb0 README.TXT\n");
         return;
     }
 
@@ -526,7 +527,7 @@ static void cmd_fatcat(int argc, char **argv) {
     kfree(buf);
 }
 
-static void cmd_fatmkdir(int argc, char **argv) {
+static void cmd_mkdir(int argc, char **argv) {
     const char *dev_name = g_shell_dev;
     const char *dirname = NULL;
 
@@ -536,7 +537,7 @@ static void cmd_fatmkdir(int argc, char **argv) {
         dev_name = argv[1];
         dirname = argv[2];
     } else {
-        kprintf("Usage: fatmkdir [dev] <dirname>\nExample: fatmkdir DOCS or fatmkdir usb0 TESTDIR\n");
+        kprintf("Usage: mkdir [dev] <dirname>\nExample: mkdir DOCS or mkdir usb0 TESTDIR\n");
         return;
     }
 
@@ -562,6 +563,63 @@ static void cmd_fatmkdir(int argc, char **argv) {
         kprint_color(0x4F, "Directory or file '%s' already exists on '%s'.\n", dirname, dev_name);
     } else {
         kprint_color(0x4F, "Failed to create directory '%s' on '%s' (code %d).\n", dirname, dev_name, res);
+    }
+}
+
+static void cmd_rm(int argc, char **argv) {
+    bool recursive = false;
+    bool force = false;
+    const char *dev_name = g_shell_dev;
+    const char *target = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            const char *opt = &argv[i][1];
+            while (*opt) {
+                if (*opt == 'r' || *opt == 'R') recursive = true;
+                else if (*opt == 'f') force = true;
+                opt++;
+            }
+        } else if (blockdev_get(argv[i]) != NULL && target == NULL && i + 1 < argc) {
+            dev_name = argv[i];
+        } else {
+            target = argv[i];
+        }
+    }
+
+    if (!target) {
+        kprintf("Usage: rm [-r|-rf] [dev] <file|dir|pattern>\nExample: rm -r * or rm -r DOCS or rm README.TXT\n");
+        return;
+    }
+
+    block_dev_t *bdev = blockdev_get(dev_name);
+    if (!bdev) {
+        kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
+        return;
+    }
+
+    fat_fs_t fs;
+    if (fat_mount(bdev, &fs) != 0) {
+        kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
+        return;
+    }
+
+    char full_path[256];
+    shell_build_path(target, full_path, sizeof(full_path));
+
+    int res = fat_remove(&fs, full_path, recursive);
+    if (res > 0) {
+        if (strchr(target, '*') != NULL || strchr(target, '?') != NULL) {
+            kprint_color(0x0A, "Removed %d item(s) on '%s'.\n", res, dev_name);
+        } else {
+            kprint_color(0x0A, "Removed '%s' on '%s'.\n", target, dev_name);
+        }
+    } else if (res == -2) {
+        kprint_color(0x4F, "rm: cannot remove '%s': Is a directory (use -r)\n", target);
+    } else {
+        if (!force) {
+            kprint_color(0x4F, "rm: cannot remove '%s': No such file or directory\n", target);
+        }
     }
 }
 
@@ -716,9 +774,10 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "writesec") == 0) cmd_writesec(argc, argv);
     else if (strcmp(argv[0], "cd") == 0) cmd_cd(argc, argv);
     else if (strcmp(argv[0], "pwd") == 0) cmd_pwd(argc, argv);
-    else if (strcmp(argv[0], "fatls") == 0) cmd_fatls(argc, argv);
-    else if (strcmp(argv[0], "fatcat") == 0) cmd_fatcat(argc, argv);
-    else if (strcmp(argv[0], "fatmkdir") == 0) cmd_fatmkdir(argc, argv);
+    else if (strcmp(argv[0], "ls") == 0 || strcmp(argv[0], "fatls") == 0) cmd_ls(argc, argv);
+    else if (strcmp(argv[0], "cat") == 0 || strcmp(argv[0], "fatcat") == 0) cmd_cat(argc, argv);
+    else if (strcmp(argv[0], "mkdir") == 0 || strcmp(argv[0], "fatmkdir") == 0) cmd_mkdir(argc, argv);
+    else if (strcmp(argv[0], "rm") == 0) cmd_rm(argc, argv);
     else if (strcmp(argv[0], "edit") == 0) cmd_edit(argc, argv);
     else if (strcmp(argv[0], "mouse") == 0) cmd_mouse(argc, argv);
     else if (strcmp(argv[0], "bench") == 0) cmd_bench(argc, argv);

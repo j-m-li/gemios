@@ -99,5 +99,7 @@ int fat_is_dir(fat_fs_t *fs, const char *path);
 int fat_read_file(fat_fs_t *fs, const char *path, void *buf, size_t max_len, size_t *out_len);
 int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len);
 int fat_mkdir(fat_fs_t *fs, const char *path);
+int fat_remove(fat_fs_t *fs, const char *path, bool recursive);
+int fat_delete_file(fat_fs_t *fs, const char *path);
 
 #endif /* GEMIOS_FAT_H */

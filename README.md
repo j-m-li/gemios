@@ -43,7 +43,7 @@ All code is dedicated to the **Public Domain** (UNLICENSE).
    - Bulk-Only Transport (BOT) with Command Block Wrapper (CBW) and Command Status Wrapper (CSW).
    - SCSI command support: `INQUIRY`, `TEST UNIT READY`, `READ CAPACITY (10)`, `READ (10)`, `WRITE (10)`.
    - Registered as block device `usb0`.
-   - FAT12/16/32 Filesystem driver supporting directory listings (`fatls`) and file reading (`fatcat`).
+   - FAT12/16/32 Filesystem driver supporting hierarchical directory navigation (`cd`, `pwd`), directory listings (`ls`), file reading (`cat`), directory creation (`mkdir`), and text editing (`edit`).
 
 6. **USB Hub Support**:
    - Hub class driver (0x09) with descriptor parsing.
@@ -110,8 +110,13 @@ To run in headless or terminal-only mode:
 | `storage` | List detected USB Mass Storage block devices |
 | `readsec <dev> <lba>` | Read and hex-dump a 512-byte sector from disk |
 | `writesec <dev> <lba> <text>` | Write text data to a sector and verify |
-| `fatls [dev]` | List directory files on the FAT filesystem |
-| `fatcat <dev> <file>` | Display contents of a file on the FAT drive |
+| `cd [dev] [dir]` | Change current directory on FAT filesystem |
+| `pwd` | Print current working directory |
+| `ls [dev] [dir]` | List directory contents on the FAT filesystem |
+| `cat [dev] <path>` | Display contents of a file on the FAT drive |
+| `mkdir [dev] <dir>` | Create a directory on the FAT filesystem |
+| `rm [-r] [dev] <path>` | Remove files, directories, or wildcards (`rm -r *`) |
+| `edit [dev] <path>` | Fullscreen MS-DOS style UTF-8 text editor |
 | `mouse` | Display live USB mouse coordinates and button state |
 | `bench` | Run RTOS preemptive context-switching benchmark |
 | `uptime` | Display uptime in seconds, milliseconds, and timer ticks |

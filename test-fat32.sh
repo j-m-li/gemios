@@ -42,10 +42,10 @@ time.sleep(1.2) # Wait for boot
 
 commands = [
     'storage',
-    'fatls usb0',
-    'fatcat usb0 README.TXT',
-    'fatcat usb0 STATUS.TXT',
-    'fatcat usb0 FAT32DOC.TXT'
+    'ls usb0',
+    'cat usb0 README.TXT',
+    'cat usb0 STATUS.TXT',
+    'cat usb0 FAT32DOC.TXT'
 ]
 
 for cmd_text in commands:

@@ -70,20 +70,20 @@ wait_prompt(timeout=6.0)
 
 commands = [
     'pwd\n',
-    'fatmkdir /DIRA\n',
-    'fatls\n',
+    'mkdir /DIRA\n',
+    'ls\n',
     'cd DIRA\n',
     'pwd\n',
-    'fatmkdir SUBDIR\n',
-    'fatls\n',
+    'mkdir SUBDIR\n',
+    'ls\n',
     'cd SUBDIR\n',
     'pwd\n',
-    'fatls\n',
+    'ls\n',
     'cd ..\n',
     'pwd\n',
     'cd /\n',
     'pwd\n',
-    'fatls /DIRA/SUBDIR\n',
+    'ls /DIRA/SUBDIR\n',
 ]
 
 for cmd_text in commands:
@@ -155,11 +155,11 @@ wait_prompt(timeout=6.0)
 
 commands = [
     'pwd\n',
-    'fatmkdir /DOCS\n',
+    'mkdir /DOCS\n',
     'cd /DOCS\n',
     'pwd\n',
-    'fatmkdir /DOCS/NESTED\n',
-    'fatls /DOCS\n',
+    'mkdir /DOCS/NESTED\n',
+    'ls /DOCS\n',
     'cd NESTED\n',
     'pwd\n',
     'cd ..\n',
