@@ -20,6 +20,7 @@ MKFS_FAT = $(TOOLS_DIR)/mkfs.fat
 MCOPY = $(TOOLS_DIR)/mcopy
 LD = $(TOOLS_DIR)/ld
 AS = $(TOOLS_DIR)/as
+MAKE_TOOL = $(TOOLS_DIR)/make
 
 C_SRCS = $(shell find src -name '*.c')
 ASM_CAP_SRCS = $(shell find src -name '*.S')
@@ -38,7 +39,12 @@ FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
 
-tools: $(MKFS_FAT) $(MCOPY) $(LD) $(AS)
+tools: $(MKFS_FAT) $(MCOPY) $(LD) $(AS) $(MAKE_TOOL)
+
+$(MAKE_TOOL): tools/make.c
+	@mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
 
 $(AS): tools/as.c
 	@mkdir -p $(@D)
