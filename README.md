@@ -60,9 +60,9 @@ All code is dedicated to the **Public Domain** (UNLICENSE).
 ## 🛠️ Toolchain & Requirements
 
 - **Compiler**: `clang` (with 32-bit x86 target support)
-- **Linker**: `ld.lld`
+- **Linker**: Built-in self-hosted ELF32 static linker (`tools/ld.c`, replaces `ld.lld`)
+- **Disk Utilities**: Built-in self-hosted C tools (`tools/mkfs_fat.c` and `tools/mcopy.c`, no external `mtools`/`dosfstools` required)
 - **Emulator**: `qemu-system-i386` or `qemu-system-x86_64`
-- **Disk Utilities**: `mkfs.fat`, `mcopy` (mtools)
 
 ---
 

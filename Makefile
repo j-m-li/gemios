@@ -1,5 +1,4 @@
 CC = clang
-LD = ld.lld
 QEMU = qemu-system-i386
 
 CFLAGS = -g -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
@@ -12,7 +11,14 @@ ASFLAGS = -m32
 
 LDFLAGS = -m elf_i386 -T linker.ld --image-base=0x100000 -nostdlib
 
+HOST_CC = clang
+HOST_CFLAGS = -Wall -Wextra -ansi -pedantic -Werror -Wno-long-long -O2
+
 BUILD_DIR = build
+TOOLS_DIR = $(BUILD_DIR)/tools
+MKFS_FAT = $(TOOLS_DIR)/mkfs.fat
+MCOPY = $(TOOLS_DIR)/mcopy
+LD = $(TOOLS_DIR)/ld
 
 C_SRCS = $(shell find src -name '*.c')
 ASM_CAP_SRCS = $(shell find src -name '*.S')
@@ -26,11 +32,28 @@ KERNEL_ELF = $(BUILD_DIR)/gemios.elf
 DISK_IMG = $(BUILD_DIR)/test_disk.img
 FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
-.PHONY: all clean run run-nographic test test-fat32
+.PHONY: all clean run run-nographic test test-fat32 tools
 
-all: $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
+all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
 
-$(KERNEL_ELF): $(OBJS) linker.ld
+tools: $(MKFS_FAT) $(MCOPY) $(LD)
+
+$(LD): tools/ld.c
+	@mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+$(MKFS_FAT): tools/mkfs_fat.c
+	@mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+$(MCOPY): tools/mcopy.c
+	@mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+$(KERNEL_ELF): $(OBJS) $(LD) linker.ld
 	@mkdir -p $(@D)
 	$(LD) $(LDFLAGS) $(OBJS) -o $@
 	@echo "[LD] Created $@"
@@ -50,31 +73,31 @@ $(BUILD_DIR)/%.o: src/%.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 	@echo "[AS] $<"
 
-$(DISK_IMG):
+$(DISK_IMG): $(MKFS_FAT) $(MCOPY)
 	@mkdir -p $(BUILD_DIR)
 	@echo "[DISK] Creating 32MB FAT16 test disk image..."
 	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=32 status=none
-	mkfs.fat -F 16 -n "GEMIOS16" $(DISK_IMG) > /dev/null
+	$(MKFS_FAT) -F 16 -n "GEMIOS16" $(DISK_IMG) > /dev/null
 	@echo "Welcome to GEMIOS RTOS on USB Mass Storage (FAT16)!" > $(BUILD_DIR)/README.TXT
 	@echo "Testing USB BOT & SCSI read/write functionality." >> $(BUILD_DIR)/README.TXT
 	@echo "All systems operational!" > $(BUILD_DIR)/STATUS.TXT
-	mcopy -i $(DISK_IMG) $(BUILD_DIR)/README.TXT ::README.TXT
-	mcopy -i $(DISK_IMG) $(BUILD_DIR)/STATUS.TXT ::STATUS.TXT
+	$(MCOPY) -i $(DISK_IMG) $(BUILD_DIR)/README.TXT ::README.TXT
+	$(MCOPY) -i $(DISK_IMG) $(BUILD_DIR)/STATUS.TXT ::STATUS.TXT
 	@echo "[DISK] Created $(DISK_IMG) (FAT16) with test files"
 
-$(FAT32_IMG):
+$(FAT32_IMG): $(MKFS_FAT) $(MCOPY)
 	@mkdir -p $(BUILD_DIR)
 	@echo "[DISK] Creating 64MB FAT32 test disk image..."
 	dd if=/dev/zero of=$(FAT32_IMG) bs=1M count=64 status=none
-	mkfs.fat -F 32 -n "GEMIOS32" $(FAT32_IMG) > /dev/null
+	$(MKFS_FAT) -F 32 -n "GEMIOS32" $(FAT32_IMG) > /dev/null
 	@echo "Welcome to GEMIOS RTOS on USB Mass Storage (FAT32)!" > $(BUILD_DIR)/README.TXT
 	@echo "Testing FAT32 cluster chain reading and root directory traversal." >> $(BUILD_DIR)/README.TXT
 	@echo "FAT32 verification passed!" > $(BUILD_DIR)/STATUS.TXT
 	@echo "GEMIOS RTOS FAT32 Document" > $(BUILD_DIR)/FAT32DOC.TXT
 	@echo "Supports cluster traversal and 32-bit FAT table lookups." >> $(BUILD_DIR)/FAT32DOC.TXT
-	mcopy -i $(FAT32_IMG) $(BUILD_DIR)/README.TXT ::README.TXT
-	mcopy -i $(FAT32_IMG) $(BUILD_DIR)/STATUS.TXT ::STATUS.TXT
-	mcopy -i $(FAT32_IMG) $(BUILD_DIR)/FAT32DOC.TXT ::FAT32DOC.TXT
+	$(MCOPY) -i $(FAT32_IMG) $(BUILD_DIR)/README.TXT ::README.TXT
+	$(MCOPY) -i $(FAT32_IMG) $(BUILD_DIR)/STATUS.TXT ::STATUS.TXT
+	$(MCOPY) -i $(FAT32_IMG) $(BUILD_DIR)/FAT32DOC.TXT ::FAT32DOC.TXT
 	@echo "[DISK] Created $(FAT32_IMG) (FAT32) with test files"
 
 run: $(KERNEL_ELF) $(DISK_IMG)
