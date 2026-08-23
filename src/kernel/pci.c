@@ -70,6 +70,7 @@ void pci_enable_bus_mastering(pci_device_t *dev) {
     uint16_t cmd;
     cmd = pci_read_config16(dev->bus, dev->slot, dev->func, 0x04);
     cmd |= (PCI_COMMAND_BUS_MASTER | PCI_COMMAND_MEMORY_SPACE | PCI_COMMAND_IO);
+    cmd &= ~(1 << 10); /* Ensure INTx interrupts are enabled */
     pci_write_config16(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 
@@ -118,16 +119,20 @@ static void pci_probe_device(uint8_t bus, uint8_t slot, uint8_t func) {
         } else {
             uint8_t mem_type;
             uint32_t size_mask;
+            uint16_t old_cmd;
 
             /* Memory Space BAR */
             dev->bar_type[bar_idx] = 0;
             mem_type = (bar_val >> 1) & 0x03;
             dev->bar[bar_idx] = bar_val & ~0x0F;
 
-            /* Probe BAR size */
+            /* Safely probe BAR size by temporarily masking decoding bits */
+            old_cmd = pci_read_config16(bus, slot, func, 0x04);
+            pci_write_config16(bus, slot, func, 0x04, old_cmd & ~(PCI_COMMAND_MEMORY_SPACE | PCI_COMMAND_IO));
             pci_write_config32(bus, slot, func, bar_offset, 0xFFFFFFFF);
             size_mask = pci_read_config32(bus, slot, func, bar_offset);
             pci_write_config32(bus, slot, func, bar_offset, bar_val); /* Restore BAR */
+            pci_write_config16(bus, slot, func, 0x04, old_cmd); /* Restore Command */
 
             if (size_mask != 0 && size_mask != 0xFFFFFFFF) {
                 dev->bar_size[bar_idx] = ~(size_mask & ~0x0F) + 1;

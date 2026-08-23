@@ -10,7 +10,17 @@
 
 #define PAGE_SIZE 4096
 
-void pmm_init(uint32_t mem_size_kb);
+/* Multiboot E820 memory map entry structure */
+struct multiboot_mmap_entry {
+    uint32_t size;
+    uint32_t addr_low;
+    uint32_t addr_high;
+    uint32_t len_low;
+    uint32_t len_high;
+    uint32_t type;
+} PACKED;
+
+void pmm_init(uint32_t mem_size_kb, uint32_t mmap_addr, uint32_t mmap_length);
 phys_addr_t pmm_alloc_page(void);
 phys_addr_t pmm_alloc_pages(size_t count);
 phys_addr_t pmm_alloc_pages_aligned(size_t count, size_t alignment);

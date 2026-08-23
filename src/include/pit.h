@@ -14,5 +14,6 @@ void pit_init(uint32_t frequency);
 uint32_t pit_get_ticks(void);
 uint32_t pit_get_uptime_sec(void);
 uint32_t pit_get_uptime_ms(void);
+void pit_delay_ms(uint32_t ms);
 
 #endif /* GEMIOS_PIT_H */

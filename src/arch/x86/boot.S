@@ -34,6 +34,15 @@ _start:
     pushl $0
     popf
 
+    # Enable Fast A20 Gate
+    inb $0x92, %al
+    testb $0x02, %al
+    jnz 1f
+    orb $0x02, %al
+    andb $0xFE, %al
+    outb %al, $0x92
+1:
+
     # Push multiboot parameters (magic in eax, info struct in ebx)
     push %ebx
     push %eax

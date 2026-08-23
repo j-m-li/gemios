@@ -96,9 +96,21 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     ps2_kbd_init();
 
     /* 4. Initialize Memory Managers */
-    mem_kb = (mbi && (mbi->flags & 0x01)) ? (mbi->mem_upper + 1024) : (128 * 1024);
-    kprintf("[Kernel] Detected %u MB RAM. Initializing PMM...\n", mem_kb / 1024);
-    pmm_init(mem_kb);
+    {
+        uint32_t mmap_addr;
+        uint32_t mmap_len;
+
+        mmap_addr = 0;
+        mmap_len = 0;
+        if (mbi && (mbi->flags & (1 << 6))) {
+            mmap_addr = mbi->mmap_addr;
+            mmap_len = mbi->mmap_length;
+        }
+        mem_kb = (mbi && (mbi->flags & 0x01)) ? (mbi->mem_upper + 1024) : (128 * 1024);
+        pmm_init(mem_kb, mmap_addr, mmap_len);
+        kprintf("[Kernel] Initialized PMM (%u MB RAM, %u pages)\n",
+                (uint32_t)((pmm_get_free_pages() * 4) / 1024), (uint32_t)pmm_get_total_pages());
+    }
 
     /* Allocate 16 MB for Kernel Heap */
     heap_mem = pmm_alloc_pages(4096);

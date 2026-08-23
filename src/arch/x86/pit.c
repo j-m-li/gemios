@@ -48,3 +48,14 @@ uint32_t pit_get_uptime_sec(void) {
 uint32_t pit_get_uptime_ms(void) {
     return (pit_ticks * 1000) / current_freq;
 }
+
+void pit_delay_ms(uint32_t ms) {
+    uint32_t i;
+    volatile uint32_t d;
+    for (i = 0; i < ms; i++) {
+        for (d = 0; d < 500; d++) {
+            io_wait();
+        }
+    }
+}
+

@@ -192,6 +192,12 @@ void ps2_kbd_init(void) {
     caps_lock = false;
     extended_code = false;
 
+    /* Check if PS/2 controller is present (0xFF indicates floating bus) */
+    if (inb(PS2_STATUS_PORT) == 0xFF) {
+        kprintf("[PS/2] No PS/2 controller detected (floating bus).\n");
+        return;
+    }
+
     /* 1. Flush any pending data in PS/2 buffer */
     while (inb(PS2_STATUS_PORT) & 0x01) {
         inb(PS2_DATA_PORT);

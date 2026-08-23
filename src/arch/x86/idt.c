@@ -116,7 +116,23 @@ uint32_t isr_handler(registers_t *regs) {
         }
     } else if (regs->int_no >= 33 && regs->int_no < 48) {
         /* Hardware IRQ */
-        uint8_t irq = regs->int_no - 32;
+        uint8_t irq;
+        irq = (uint8_t)(regs->int_no - 32);
+
+        /* Handle spurious IRQ 7 */
+        if (irq == 7) {
+            outb(PIC1_COMMAND, 0x0B);
+            if ((inb(PIC1_COMMAND) & (1 << 7)) == 0) {
+                return (uint32_t)regs;
+            }
+        } else if (irq == 15) {
+            outb(PIC2_COMMAND, 0x0B);
+            if ((inb(PIC2_COMMAND) & (1 << 7)) == 0) {
+                outb(PIC1_COMMAND, PIC_EOI);
+                return (uint32_t)regs;
+            }
+        }
+
         if (interrupt_handlers[regs->int_no]) {
             interrupt_handlers[regs->int_no](regs);
         }

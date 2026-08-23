@@ -69,6 +69,57 @@ void xhci_ring_doorbell(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t target
     mmio_write32(db_reg, target);
 }
 
+static void xhci_bios_handoff(xhci_controller_t *ctrl, uint32_t hcc1) {
+    uint32_t xecp;
+    uintptr_t ext_cap_addr;
+
+    xecp = XHCI_HCC1_XECP(hcc1);
+    if (xecp == 0) return;
+
+    ext_cap_addr = ctrl->cap_base + (xecp << 2);
+
+    while (ext_cap_addr != 0) {
+        uint32_t cap_val;
+        uint8_t cap_id;
+        uint8_t next_offset;
+
+        cap_val = mmio_read32(ext_cap_addr);
+        cap_id = (uint8_t)(cap_val & 0xFF);
+        next_offset = (uint8_t)((cap_val >> 8) & 0xFF);
+
+        if (cap_id == XHCI_EXT_CAP_LEGSUP) {
+            if (cap_val & XHCI_LEGSUP_BIOS_OWNED) {
+                int timeout;
+                kprintf("[xHCI] Requesting OS ownership from BIOS (USBLEGSUP)...\n");
+                mmio_write32(ext_cap_addr, cap_val | XHCI_LEGSUP_OS_OWNED);
+
+                timeout = 1000;
+                while (timeout-- > 0) {
+                    cap_val = mmio_read32(ext_cap_addr);
+                    if ((cap_val & XHCI_LEGSUP_BIOS_OWNED) == 0) {
+                        break;
+                    }
+                    pit_delay_ms(1);
+                }
+
+                if (cap_val & XHCI_LEGSUP_BIOS_OWNED) {
+                    kprintf("[xHCI] BIOS handoff timed out, taking ownership.\n");
+                    mmio_write32(ext_cap_addr, XHCI_LEGSUP_OS_OWNED);
+                } else {
+                    kprintf("[xHCI] BIOS handoff successful.\n");
+                }
+            }
+
+            /* Disable BIOS SMIs in USBLEGCTLSTS (offset + 4) */
+            mmio_write32(ext_cap_addr + 4, 0);
+            break;
+        }
+
+        if (next_offset == 0) break;
+        ext_cap_addr += ((uintptr_t)next_offset << 2);
+    }
+}
+
 bool xhci_init(pci_device_t *pci_dev) {
     uint32_t bar0;
     uint32_t rtsoff;
@@ -82,6 +133,7 @@ bool xhci_init(pci_device_t *pci_dev) {
     uintptr_t rt_intr;
     int i;
     volatile int d;
+    uint8_t p_idx;
 
     rtos_mutex_init(&g_xhci_mutex);
     memset(&g_xhci, 0, sizeof(xhci_controller_t));
@@ -118,7 +170,10 @@ bool xhci_init(pci_device_t *pci_dev) {
     kprintf("[xHCI] MaxSlots: %u, MaxPorts: %u, MaxIntrs: %u, CSZ: %u, MMIO: %p\n",
             g_xhci.max_slots, g_xhci.max_ports, g_xhci.max_intrs, g_xhci.csz, (void*)g_xhci.mmio_base);
 
-    /* Stop and reset controller */
+    /* 1. Perform BIOS-to-OS handoff */
+    xhci_bios_handoff(&g_xhci, hcc1);
+
+    /* 2. Stop and reset controller */
     usbcmd = mmio_read32(g_xhci.op_base + XHCI_OP_USBCMD);
     usbcmd &= ~XHCI_CMD_RS;
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, usbcmd);
@@ -131,6 +186,12 @@ bool xhci_init(pci_device_t *pci_dev) {
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, XHCI_CMD_HCRST);
     for (i = 0; i < 100; i++) {
         if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBCMD) & XHCI_CMD_HCRST) == 0) break;
+        for (d = 0; d < 1000; d++);
+    }
+
+    /* Wait for Controller Not Ready (CNR) to clear */
+    for (i = 0; i < 200; i++) {
+        if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBSTS) & XHCI_STS_CNR) == 0) break;
         for (d = 0; d < 1000; d++);
     }
 
@@ -187,6 +248,19 @@ bool xhci_init(pci_device_t *pci_dev) {
         }
         for (d = 0; d < 1000; d++);
     }
+
+    /* 3. Power on all Root Hub Ports */
+    for (p_idx = 1; p_idx <= g_xhci.max_ports; p_idx++) {
+        uintptr_t portsc_reg;
+        uint32_t portsc;
+
+        portsc_reg = g_xhci.op_base + XHCI_OP_PORTSC_BASE + ((p_idx - 1) * 0x10);
+        portsc = mmio_read32(portsc_reg);
+        if (!(portsc & XHCI_PORTSC_PP)) {
+            mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PP);
+        }
+    }
+    pit_delay_ms(20);
 
     g_xhci.initialized = true;
     kprintf("[xHCI] Host Controller started successfully.\n");
@@ -496,28 +570,40 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
         portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
         portsc = mmio_read32(portsc_reg);
 
+        /* Ensure port is powered */
+        if (!(portsc & XHCI_PORTSC_PP)) {
+            mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PP);
+            pit_delay_ms(20);
+            portsc = mmio_read32(portsc_reg);
+        }
+
         if (portsc & XHCI_PORTSC_CCS) {
-            int i;
-            volatile int d;
             uint8_t speed;
             uint8_t slot_id;
 
-            kprintf("[xHCI] Port %u: Device detected. Resetting port...\n", port);
+            /* Check if port is already enabled (e.g. SuperSpeed U0 state) */
+            if (!(portsc & XHCI_PORTSC_PED)) {
+                int i;
+                volatile int d;
 
-            mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PR);
+                kprintf("[xHCI] Port %u: Device detected. Resetting port...\n", port);
+                mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PR);
 
-            for (i = 0; i < 200; i++) {
-                portsc = mmio_read32(portsc_reg);
-                if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
-                    break;
+                for (i = 0; i < 200; i++) {
+                    portsc = mmio_read32(portsc_reg);
+                    if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                        break;
+                    }
+                    for (d = 0; d < 10000; d++);
                 }
-                for (d = 0; d < 10000; d++);
+
+                /* Clear change bits (W1C) */
+                mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
+                portsc = mmio_read32(portsc_reg);
             }
 
-            mmio_write32(portsc_reg, portsc);
-
             speed = XHCI_PORTSC_SPEED(portsc);
-            kprintf("[xHCI] Port %u: Reset complete. Speed = %s (%u)\n",
+            kprintf("[xHCI] Port %u: Connected. Speed = %s (%u)\n",
                     port, usb_speed_to_string(speed), speed);
 
             slot_id = 0;
