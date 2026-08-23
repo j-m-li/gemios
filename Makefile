@@ -1,7 +1,7 @@
 CC = clang
 QEMU = qemu-system-i386
 
-CFLAGS = -g -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
+CFLAGS = -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
          -fno-stack-protector -fno-builtin -nostdlib -Wall -Wextra \
          -ansi -pedantic -Werror -Wno-long-long \
          -Wno-unused-parameter -Wno-unused-function -O0 \
@@ -34,6 +34,7 @@ DISK_IMG = $(BUILD_DIR)/test_disk.img
 FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
 .PHONY: all clean run run-nographic test test-fat32 tools
+.SECONDARY:
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
 
@@ -64,20 +65,25 @@ $(KERNEL_ELF): $(OBJS) $(LD) linker.ld
 	$(LD) $(LDFLAGS) $(OBJS) -o $@
 	@echo "[LD] Created $@"
 
-$(BUILD_DIR)/%.o: src/%.c
+$(BUILD_DIR)/%.s: src/%.c
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
-	@echo "[CC] $<"
+	$(CC) $(CFLAGS) -S $< -o $@
+	@echo "[CC -S] $< -> $@"
+
+$(BUILD_DIR)/%.o: $(BUILD_DIR)/%.s $(AS)
+	@mkdir -p $(@D)
+	$(AS) $< -o $@
+	@echo "[AS] $< -> $@"
 
 $(BUILD_DIR)/%.o: src/%.S $(AS)
 	@mkdir -p $(@D)
 	$(AS) $< -o $@
-	@echo "[AS] $<"
+	@echo "[AS] $< -> $@"
 
 $(BUILD_DIR)/%.o: src/%.s $(AS)
 	@mkdir -p $(@D)
 	$(AS) $< -o $@
-	@echo "[AS] $<"
+	@echo "[AS] $< -> $@"
 
 $(DISK_IMG): $(MKFS_FAT) $(MCOPY)
 	@mkdir -p $(BUILD_DIR)

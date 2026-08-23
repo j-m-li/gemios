@@ -70,12 +70,12 @@ for cmd_text in commands:
         else:
             proc.stdin.write(f'sendkey {ch}\n')
         proc.stdin.flush()
-        time.sleep(0.02)
+        time.sleep(0.04)
     proc.stdin.write('sendkey ret\n')
     proc.stdin.flush()
-    time.sleep(0.1)
+    time.sleep(0.3)
 
-time.sleep(1.5)
+time.sleep(2.0)
 proc.terminate()
 proc.wait()
 log_file.close()
