@@ -148,7 +148,7 @@ typedef struct xhci_input_ctrl_ctx xhci_input_ctrl_ctx_t;
 struct xhci_device_ctx {
     xhci_slot_ctx_t slot;
     xhci_ep_ctx_t   ep[31];
-} PACKED ALIGNED(64);
+};
 typedef struct xhci_device_ctx xhci_device_ctx_t;
 
 /* Input Context (33 * 32 bytes = 1056 bytes) */
@@ -156,7 +156,7 @@ struct xhci_input_ctx {
     xhci_input_ctrl_ctx_t ctrl;
     xhci_slot_ctx_t       slot;
     xhci_ep_ctx_t         ep[31];
-} PACKED ALIGNED(64);
+};
 typedef struct xhci_input_ctx xhci_input_ctx_t;
 
 #endif /* GEMIOS_XHCI_TRB_H */

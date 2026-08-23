@@ -10,7 +10,7 @@
 #include "idt.h"
 
 void rtos_sched_init(void);
-void rtos_sched_start(void) NORETURN;
+void rtos_sched_start(void);
 void rtos_yield(void);
 void rtos_reschedule(void);
 task_t *rtos_current_task(void);

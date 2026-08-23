@@ -29,11 +29,7 @@ typedef int bool;
 #define false 0
 #endif
 
-#define PACKED __attribute__((packed))
-#define ALIGNED(n) __attribute__((aligned(n)))
-#define NORETURN __attribute__((noreturn))
-#define UNUSED(x) ((void)(x))
-
+#define UNUSED(s) (void)s
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
