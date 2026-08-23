@@ -88,6 +88,7 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  uptime                - Show system uptime\n");
     kprintf("  clear                 - Clear the terminal screen\n");
     kprintf("  reboot                - Reboot the system\n");
+    kprintf("  shutdown              - Power off / shutdown the system\n");
     kprintf("=============================================================\n");
 }
 
@@ -800,6 +801,13 @@ static void cmd_reboot(int argc, char **argv) {
     arch_reboot();
 }
 
+static void cmd_shutdown(int argc, char **argv) {
+    UNUSED(argc);
+    UNUSED(argv);
+    kprintf("Shutting down system...\n");
+    arch_shutdown();
+}
+
 static void cmd_edit(int argc, char **argv) {
     const char *dev_name;
     const char *filename;
@@ -899,6 +907,7 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "uptime") == 0) cmd_uptime(argc, argv);
     else if (strcmp(argv[0], "clear") == 0) cmd_clear(argc, argv);
     else if (strcmp(argv[0], "reboot") == 0) cmd_reboot(argc, argv);
+    else if (strcmp(argv[0], "shutdown") == 0 || strcmp(argv[0], "poweroff") == 0) cmd_shutdown(argc, argv);
     else {
         kprint_color(0x4F, "Unknown command: '%s'. Type 'help' for commands.\n", argv[0]);
     }

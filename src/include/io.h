@@ -27,6 +27,7 @@ void load_idt(const void *idt_ptr);
 void arch_trigger_yield(void);
 void rtos_start_first_task(uint32_t *stack_ptr);
 void arch_reboot(void);
+void arch_shutdown(void);
 
 /* High-level IRQ state helpers */
 uint32_t irq_save(void);

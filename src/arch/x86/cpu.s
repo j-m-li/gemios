@@ -135,3 +135,43 @@ arch_reboot:
     int $3
 1:  hlt
     jmp 1b
+
+.global arch_shutdown
+.type arch_shutdown, @function
+arch_shutdown:
+    /* QEMU modern ACPI shutdown */
+    movw $0x2000, %ax
+    movw $0x0604, %dx
+    outw %ax, %dx
+
+    /* QEMU old / Bochs ACPI shutdown */
+    movw $0x2000, %ax
+    movw $0xB004, %dx
+    outw %ax, %dx
+
+    /* VirtualBox ACPI shutdown */
+    movw $0x3400, %ax
+    movw $0x4004, %dx
+    outw %ax, %dx
+
+    /* QEMU isa-debug-exit */
+    movb $0x00, %al
+    movw $0x0501, %dx
+    outb %al, %dx
+
+    /* Bochs shutdown string */
+    movw $0x8900, %dx
+    movw $0x5348, %ax
+    outw %ax, %dx
+    movw $0x5554, %ax
+    outw %ax, %dx
+    movw $0x444F, %ax
+    outw %ax, %dx
+    movw $0x574E, %ax
+    outw %ax, %dx
+
+    /* Fallback: disable interrupts and halt CPU */
+    cli
+2:  hlt
+    jmp 2b
+
