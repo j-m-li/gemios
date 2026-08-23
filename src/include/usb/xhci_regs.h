@@ -56,10 +56,10 @@
 #define XHCI_STS_CNR            (1 << 11) /* Controller Not Ready */
 
 /* CRCR Bits */
-#define XHCI_CRCR_RCS           (1ULL << 0) /* Ring Cycle State */
-#define XHCI_CRCR_CS            (1ULL << 1) /* Command Stop */
-#define XHCI_CRCR_CA            (1ULL << 2) /* Command Abort */
-#define XHCI_CRCR_CRR           (1ULL << 3) /* Command Ring Running */
+#define XHCI_CRCR_RCS           (1U << 0) /* Ring Cycle State */
+#define XHCI_CRCR_CS            (1U << 1) /* Command Stop */
+#define XHCI_CRCR_CA            (1U << 2) /* Command Abort */
+#define XHCI_CRCR_CRR           (1U << 3) /* Command Ring Running */
 
 /* PORTSC Bits */
 #define XHCI_PORTSC_CCS         (1 << 0)   /* Current Connect Status */
@@ -90,7 +90,7 @@
 
 #define XHCI_IMAN_IP            (1 << 0) /* Interrupt Pending */
 #define XHCI_IMAN_IE            (1 << 1) /* Interrupt Enable */
-#define XHCI_ERDP_EHB           (1ULL << 3) /* Event Handler Busy */
+#define XHCI_ERDP_EHB           (1U << 3) /* Event Handler Busy */
 
 /* Extended Capabilities */
 #define XHCI_EXT_CAP_LEGSUP     0x01

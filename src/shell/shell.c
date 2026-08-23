@@ -262,8 +262,8 @@ static void cmd_storage(int argc, char **argv) {
         kprintf("    Total Blocks: %u\n", bdev->total_blocks);
         kprintf("    Block Size:   %u bytes\n", bdev->block_size);
         kprintf("    Capacity:     %u MB (%u KB)\n",
-                (uint32_t)(((uint64_t)bdev->total_blocks * bdev->block_size) / (1024 * 1024)),
-                (uint32_t)(((uint64_t)bdev->total_blocks * bdev->block_size) / 1024));
+                ((bdev->total_blocks / 1024) * bdev->block_size) / 1024,
+                ((bdev->total_blocks / 1024) * bdev->block_size) + ((bdev->total_blocks % 1024) * bdev->block_size) / 1024);
     }
 }
 
@@ -931,7 +931,7 @@ static int shell_get_char(void) {
     if (serial_has_char()) {
         uint8_t c;
         c = (uint8_t)serial_getchar();
-        /* Parse ANSI Escape Sequence: ESC [ A / B / C / D */
+        /* Parse ANSI Escape Sequences */
         if (c == 27) { /* ESC */
             int c2;
             c2 = get_serial_byte_timed(500000);
@@ -942,6 +942,29 @@ static int shell_get_char(void) {
                 if (c3 == 'B') return KEY_DOWN;
                 if (c3 == 'C') return KEY_RIGHT;
                 if (c3 == 'D') return KEY_LEFT;
+                if (c3 == 'H') return KEY_HOME;
+                if (c3 == 'F') return KEY_END;
+                if (c3 == '3') {
+                    int c4 = get_serial_byte_timed(500000);
+                    if (c4 == '~') return KEY_DELETE;
+                }
+                if (c3 == '1' || c3 == '7') {
+                    int c4 = get_serial_byte_timed(500000);
+                    if (c4 == '~') return KEY_HOME;
+                }
+                if (c3 == '4' || c3 == '8') {
+                    int c4 = get_serial_byte_timed(500000);
+                    if (c4 == '~') return KEY_END;
+                }
+            } else if (c2 == 'O') {
+                int c3;
+                c3 = get_serial_byte_timed(500000);
+                if (c3 == 'A') return KEY_UP;
+                if (c3 == 'B') return KEY_DOWN;
+                if (c3 == 'C') return KEY_RIGHT;
+                if (c3 == 'D') return KEY_LEFT;
+                if (c3 == 'H') return KEY_HOME;
+                if (c3 == 'F') return KEY_END;
             }
             if (c2 == -1) return 0;
             return c2;
@@ -954,9 +977,11 @@ static int shell_get_char(void) {
 void shell_task(void *arg) {
     char cmd_buffer[CMD_BUFFER_SIZE];
     size_t cmd_pos;
+    size_t cmd_len;
 
     UNUSED(arg);
     cmd_pos = 0;
+    cmd_len = 0;
     cmd_buffer[0] = '\0';
     current_draft[0] = '\0';
     history_browse_idx = -1;
@@ -973,10 +998,11 @@ void shell_task(void *arg) {
         if (c != 0) {
             if (c == '\n' || c == '\r') {
                 kprintf("\n");
-                cmd_buffer[cmd_pos] = '\0';
-                if (cmd_pos > 0) {
+                cmd_buffer[cmd_len] = '\0';
+                if (cmd_len > 0) {
                     shell_execute_command(cmd_buffer);
                     cmd_pos = 0;
+                    cmd_len = 0;
                     cmd_buffer[0] = '\0';
                 }
                 history_browse_idx = -1;
@@ -990,14 +1016,17 @@ void shell_task(void *arg) {
 
                     oldest = (history_count > HISTORY_SIZE) ? (history_count - HISTORY_SIZE) : 0;
                     if (history_browse_idx == -1) {
-                        cmd_buffer[cmd_pos] = '\0';
+                        cmd_buffer[cmd_len] = '\0';
                         strncpy(current_draft, cmd_buffer, sizeof(current_draft) - 1);
                         history_browse_idx = (int)history_count - 1;
                     } else if (history_browse_idx > (int)oldest) {
                         history_browse_idx--;
                     }
 
-                    /* Erase current prompt line */
+                    /* Move cursor to end then erase entire prompt line */
+                    while (cmd_pos < cmd_len) {
+                        kprintf("%c", cmd_buffer[cmd_pos++]);
+                    }
                     while (cmd_pos > 0) {
                         kprintf("\b \b");
                         cmd_pos--;
@@ -1006,53 +1035,158 @@ void shell_task(void *arg) {
                     entry = history_get(history_browse_idx);
                     if (entry) {
                         strncpy(cmd_buffer, entry, sizeof(cmd_buffer) - 1);
-                        cmd_pos = strlen(cmd_buffer);
+                        cmd_len = strlen(cmd_buffer);
+                        cmd_pos = cmd_len;
                         kprintf("%s", cmd_buffer);
+                    } else {
+                        cmd_len = 0;
+                        cmd_buffer[0] = '\0';
                     }
                 }
             } else if (c == KEY_DOWN) {
                 /* Navigate forward in history */
                 if (history_browse_idx != -1) {
+                    while (cmd_pos < cmd_len) {
+                        kprintf("%c", cmd_buffer[cmd_pos++]);
+                    }
+                    while (cmd_pos > 0) {
+                        kprintf("\b \b");
+                        cmd_pos--;
+                    }
+
                     if (history_browse_idx < (int)history_count - 1) {
                         const char *entry;
                         history_browse_idx++;
-
-                        while (cmd_pos > 0) {
-                            kprintf("\b \b");
-                            cmd_pos--;
-                        }
-
                         entry = history_get(history_browse_idx);
                         if (entry) {
                             strncpy(cmd_buffer, entry, sizeof(cmd_buffer) - 1);
-                            cmd_pos = strlen(cmd_buffer);
+                            cmd_len = strlen(cmd_buffer);
+                            cmd_pos = cmd_len;
                             kprintf("%s", cmd_buffer);
+                        } else {
+                            cmd_len = 0;
+                            cmd_buffer[0] = '\0';
                         }
                     } else {
                         /* Restore draft line */
                         history_browse_idx = -1;
-
-                        while (cmd_pos > 0) {
-                            kprintf("\b \b");
-                            cmd_pos--;
-                        }
-
                         strncpy(cmd_buffer, current_draft, sizeof(cmd_buffer) - 1);
-                        cmd_pos = strlen(cmd_buffer);
+                        cmd_len = strlen(cmd_buffer);
+                        cmd_pos = cmd_len;
                         kprintf("%s", cmd_buffer);
                     }
                 }
-            } else if (c == '\b' || c == 127) {
+            } else if (c == KEY_LEFT) {
                 if (cmd_pos > 0) {
                     cmd_pos--;
-                    cmd_buffer[cmd_pos] = '\0';
+                    kprintf("\b");
+                }
+            } else if (c == KEY_RIGHT) {
+                if (cmd_pos < cmd_len) {
+                    kprintf("%c", cmd_buffer[cmd_pos]);
+                    cmd_pos++;
+                }
+            } else if (c == KEY_HOME || c == 1) { /* Home or Ctrl+A */
+                while (cmd_pos > 0) {
+                    kprintf("\b");
+                    cmd_pos--;
+                }
+            } else if (c == KEY_END || c == 5) { /* End or Ctrl+E */
+                while (cmd_pos < cmd_len) {
+                    kprintf("%c", cmd_buffer[cmd_pos]);
+                    cmd_pos++;
+                }
+            } else if (c == 21 || c == 3) { /* Ctrl+U or Ctrl+C: clear line */
+                while (cmd_pos < cmd_len) {
+                    kprintf("%c", cmd_buffer[cmd_pos++]);
+                }
+                while (cmd_pos > 0) {
                     kprintf("\b \b");
+                    cmd_pos--;
+                }
+                cmd_len = 0;
+                cmd_buffer[0] = '\0';
+            } else if (c == 11) { /* Ctrl+K: clear to end of line */
+                size_t k;
+                for (k = cmd_pos; k < cmd_len; k++) {
+                    kprintf(" ");
+                }
+                for (k = cmd_pos; k < cmd_len; k++) {
+                    kprintf("\b");
+                }
+                cmd_len = cmd_pos;
+                cmd_buffer[cmd_len] = '\0';
+            } else if (c == '\b' || c == 127) {
+                if (cmd_pos > 0) {
+                    if (cmd_pos == cmd_len) {
+                        /* Backspace at end of line */
+                        cmd_pos--;
+                        cmd_len--;
+                        cmd_buffer[cmd_len] = '\0';
+                        kprintf("\b \b");
+                    } else {
+                        /* Backspace in middle of line */
+                        size_t k;
+                        for (k = cmd_pos - 1; k < cmd_len - 1; k++) {
+                            cmd_buffer[k] = cmd_buffer[k + 1];
+                        }
+                        cmd_pos--;
+                        cmd_len--;
+                        cmd_buffer[cmd_len] = '\0';
+
+                        kprintf("\b");
+                        for (k = cmd_pos; k < cmd_len; k++) {
+                            kprintf("%c", cmd_buffer[k]);
+                        }
+                        kprintf(" ");
+                        for (k = cmd_pos; k <= cmd_len; k++) {
+                            kprintf("\b");
+                        }
+                    }
+                }
+            } else if (c == KEY_DELETE) {
+                if (cmd_pos < cmd_len) {
+                    size_t k;
+                    for (k = cmd_pos; k < cmd_len - 1; k++) {
+                        cmd_buffer[k] = cmd_buffer[k + 1];
+                    }
+                    cmd_len--;
+                    cmd_buffer[cmd_len] = '\0';
+
+                    for (k = cmd_pos; k < cmd_len; k++) {
+                        kprintf("%c", cmd_buffer[k]);
+                    }
+                    kprintf(" ");
+                    for (k = cmd_pos; k <= cmd_len; k++) {
+                        kprintf("\b");
+                    }
                 }
             } else if ((uint8_t)c >= 32 && (uint8_t)c <= 126) {
-                if (cmd_pos < CMD_BUFFER_SIZE - 1) {
-                    cmd_buffer[cmd_pos++] = (char)c;
-                    cmd_buffer[cmd_pos] = '\0';
-                    kprintf("%c", c);
+                if (cmd_len < CMD_BUFFER_SIZE - 1) {
+                    if (cmd_pos == cmd_len) {
+                        /* Append at end */
+                        cmd_buffer[cmd_len++] = (char)c;
+                        cmd_buffer[cmd_len] = '\0';
+                        cmd_pos++;
+                        kprintf("%c", c);
+                    } else {
+                        /* Insert in middle */
+                        size_t k;
+                        for (k = cmd_len; k > cmd_pos; k--) {
+                            cmd_buffer[k] = cmd_buffer[k - 1];
+                        }
+                        cmd_buffer[cmd_pos] = (char)c;
+                        cmd_len++;
+                        cmd_buffer[cmd_len] = '\0';
+
+                        for (k = cmd_pos; k < cmd_len; k++) {
+                            kprintf("%c", cmd_buffer[k]);
+                        }
+                        cmd_pos++;
+                        for (k = cmd_pos; k < cmd_len; k++) {
+                            kprintf("\b");
+                        }
+                    }
                 }
             }
         } else {

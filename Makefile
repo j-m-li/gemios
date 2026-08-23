@@ -3,16 +3,20 @@ QEMU = qemu-system-i386
 
 CFLAGS = -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
          -fno-stack-protector -fno-builtin -nostdlib -Wall -Wextra \
-         -ansi -pedantic -Werror -Wno-long-long \
+         -ansi -pedantic -Werror \
          -Wno-unused-parameter -Wno-unused-function -O0 \
          -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell
+#CC = ../ccia/ccia-i386
+#CFLAGS =  \
+#         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell \
+#	-I../ccia/include -I../ccia/include/riscv32 \
 
 ASFLAGS = -m32
 
 LDFLAGS = -m elf_i386 -T linker.ld --image-base=0x100000 -nostdlib
 
 HOST_CC = clang
-HOST_CFLAGS = -Wall -Wextra -ansi -pedantic -Werror -Wno-long-long -O2
+HOST_CFLAGS = -Wall -Wextra -ansi -pedantic -Werror -O2
 
 BUILD_DIR = build
 TOOLS_DIR = $(BUILD_DIR)/tools
@@ -21,6 +25,7 @@ MCOPY = $(TOOLS_DIR)/mcopy
 LD = $(TOOLS_DIR)/ld
 AS = $(TOOLS_DIR)/as
 MAKE_TOOL = $(TOOLS_DIR)/make
+DD = $(TOOLS_DIR)/dd
 
 C_SRCS = $(shell find src -name '*.c')
 ASM_CAP_SRCS = $(shell find src -name '*.S')
@@ -39,7 +44,36 @@ FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
 
-tools: $(MKFS_FAT) $(MCOPY) $(LD) $(AS) $(MAKE_TOOL)
+tools: $(MKFS_FAT) $(MCOPY) $(LD) $(AS) $(MAKE_TOOL) $(DD)
+
+tools/make: tools/make.c
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+tools/as: tools/as.c
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+tools/ld: tools/ld.c
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+tools/dd: tools/dd.c
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+tools/mkfs.fat: tools/mkfs_fat.c
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+tools/mcopy: tools/mcopy.c
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
+
+$(DD): tools/dd.c
+	@mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $< -o $@
+	@echo "[HOST_CC] $< -> $@"
 
 $(MAKE_TOOL): tools/make.c
 	@mkdir -p $(@D)
@@ -91,10 +125,10 @@ $(BUILD_DIR)/%.o: src/%.s $(AS)
 	$(AS) $< -o $@
 	@echo "[AS] $< -> $@"
 
-$(DISK_IMG): $(MKFS_FAT) $(MCOPY)
+$(DISK_IMG): $(MKFS_FAT) $(MCOPY) $(DD)
 	@mkdir -p $(BUILD_DIR)
 	@echo "[DISK] Creating 32MB FAT16 test disk image..."
-	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=32 status=none
+	$(DD) if=/dev/zero of=$(DISK_IMG) bs=1M count=32 status=none
 	$(MKFS_FAT) -F 16 -n "GEMIOS16" $(DISK_IMG) > /dev/null
 	@echo "Welcome to GEMIOS RTOS on USB Mass Storage (FAT16)!" > $(BUILD_DIR)/README.TXT
 	@echo "Testing USB BOT & SCSI read/write functionality." >> $(BUILD_DIR)/README.TXT
@@ -103,10 +137,10 @@ $(DISK_IMG): $(MKFS_FAT) $(MCOPY)
 	$(MCOPY) -i $(DISK_IMG) $(BUILD_DIR)/STATUS.TXT ::STATUS.TXT
 	@echo "[DISK] Created $(DISK_IMG) (FAT16) with test files"
 
-$(FAT32_IMG): $(MKFS_FAT) $(MCOPY)
+$(FAT32_IMG): $(MKFS_FAT) $(MCOPY) $(DD)
 	@mkdir -p $(BUILD_DIR)
 	@echo "[DISK] Creating 64MB FAT32 test disk image..."
-	dd if=/dev/zero of=$(FAT32_IMG) bs=1M count=64 status=none
+	$(DD) if=/dev/zero of=$(FAT32_IMG) bs=1M count=64 status=none
 	$(MKFS_FAT) -F 32 -n "GEMIOS32" $(FAT32_IMG) > /dev/null
 	@echo "Welcome to GEMIOS RTOS on USB Mass Storage (FAT32)!" > $(BUILD_DIR)/README.TXT
 	@echo "Testing FAT32 cluster chain reading and root directory traversal." >> $(BUILD_DIR)/README.TXT
@@ -131,4 +165,4 @@ test-fat32: $(KERNEL_ELF) $(FAT32_IMG)
 	./test-fat32.sh
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) tools/make tools/as tools/ld tools/dd tools/mkfs.fat tools/mcopy

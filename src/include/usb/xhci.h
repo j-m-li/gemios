@@ -54,7 +54,7 @@ typedef struct xhci_controller {
     uint16_t max_intrs;
     uint8_t csz;
 
-    uint64_t *dcbaa;
+    uint32_t *dcbaa;
     phys_addr_t dcbaa_phys;
 
     xhci_erst_entry_t *erst;

@@ -1,1 +1,7 @@
 build/
+tools/make
+tools/as
+tools/ld
+tools/dd
+tools/mkfs.fat
+tools/mcopy

@@ -254,7 +254,7 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
             msc->vendor, msc->product, msc->revision);
     kprintf("[MSC] Capacity: %u blocks of %u bytes (%u MB)\n",
             msc->block_count, msc->block_size,
-            (uint32_t)(((uint64_t)msc->block_count * msc->block_size) / (1024 * 1024)));
+            (msc->block_count / 1024) * msc->block_size / 1024);
 
     /* Register block device */
     snprintf(msc->bdev.name, sizeof(msc->bdev.name), "usb%u", (uint32_t)msc_count);

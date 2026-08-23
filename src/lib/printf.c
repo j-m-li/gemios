@@ -4,65 +4,11 @@
  */
 
 #include "string.h"
+#include "stdarg.h"
 #include "vga.h"
 
-/* 64-bit arithmetic helper routines for bare-metal x86 */
-uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p) {
-    uint64_t quot;
-    uint64_t qbit;
-    quot = 0;
-    qbit = 1;
-    if (den == 0) return 0;
-    while ((int64_t)den >= 0 && den < num) {
-        den <<= 1;
-        qbit <<= 1;
-    }
-    while (qbit) {
-        if (num >= den) {
-            num -= den;
-            quot |= qbit;
-        }
-        den >>= 1;
-        qbit >>= 1;
-    }
-    if (rem_p) *rem_p = num;
-    return quot;
-}
-
-uint64_t __udivdi3(uint64_t a, uint64_t b) {
-    return __udivmoddi4(a, b, NULL);
-}
-
-uint64_t __umoddi3(uint64_t a, uint64_t b) {
-    uint64_t rem;
-    rem = 0;
-    __udivmoddi4(a, b, &rem);
-    return rem;
-}
-
-int64_t __divdi3(int64_t a, int64_t b) {
-    bool neg;
-    uint64_t res;
-    neg = false;
-    if (a < 0) { a = -a; neg = !neg; }
-    if (b < 0) { b = -b; neg = !neg; }
-    res = __udivmoddi4((uint64_t)a, (uint64_t)b, NULL);
-    return neg ? -(int64_t)res : (int64_t)res;
-}
-
-int64_t __moddi3(int64_t a, int64_t b) {
-    bool neg;
-    uint64_t rem;
-    neg = false;
-    rem = 0;
-    if (a < 0) { a = -a; neg = true; }
-    if (b < 0) { b = -b; }
-    __udivmoddi4((uint64_t)a, (uint64_t)b, &rem);
-    return neg ? -(int64_t)rem : (int64_t)rem;
-}
-
-static void format_number(char **buf, size_t *rem, uint64_t num, int base, int width, char pad_char, bool uppercase, bool is_signed, bool left_align) {
-    char temp[64];
+static void format_number(char **buf, size_t *rem, uint32_t num, int base, int width, char pad_char, bool uppercase, bool is_signed, bool left_align) {
+    char temp[32];
     int pos;
     const char *digits;
     bool negative;
@@ -72,9 +18,9 @@ static void format_number(char **buf, size_t *rem, uint64_t num, int base, int w
     digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
     negative = false;
 
-    if (is_signed && (int64_t)num < 0) {
+    if (is_signed && (int32_t)num < 0) {
         negative = true;
-        num = -(int64_t)num;
+        num = (uint32_t)(-(int32_t)num);
     }
 
     if (num == 0) {
@@ -222,7 +168,7 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
             case 'i': {
                 int32_t val;
                 val = va_arg(ap, int32_t);
-                format_number(&buf, &rem, (uint64_t)val, 10, width, pad_char, false, true, left_align);
+                format_number(&buf, &rem, (uint32_t)val, 10, width, pad_char, false, true, left_align);
                 break;
             }
             case 'u': {

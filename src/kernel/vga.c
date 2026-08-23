@@ -173,7 +173,6 @@ void vga_putc(char c) {
     } else if (c == '\b') {
         if (cursor_x > 0) {
             cursor_x--;
-            vga_putc_at(' ', current_color, cursor_x, cursor_y);
         }
     } else {
         vga_putc_at(c, current_color, cursor_x, cursor_y);

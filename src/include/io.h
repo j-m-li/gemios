@@ -38,11 +38,11 @@ void memory_barrier(void);
 uint8_t mmio_read8(uintptr_t addr);
 uint16_t mmio_read16(uintptr_t addr);
 uint32_t mmio_read32(uintptr_t addr);
-uint64_t mmio_read64(uintptr_t addr);
+uint32_t mmio_read64_lo(uintptr_t addr);
 
 void mmio_write8(uintptr_t addr, uint8_t val);
 void mmio_write16(uintptr_t addr, uint16_t val);
 void mmio_write32(uintptr_t addr, uint32_t val);
-void mmio_write64(uintptr_t addr, uint64_t val);
+void mmio_write64(uintptr_t addr, uint32_t low, uint32_t high);
 
 #endif /* GEMIOS_IO_H */

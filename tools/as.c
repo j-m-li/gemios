@@ -364,6 +364,26 @@ static int32_t eval_expr(const char **expr_ptr) {
     } else if (*p == '$') {
         p++;
         val = eval_expr(&p);
+    } else if (*p == '\'') {
+        p++;
+        if (*p == '\\') {
+            p++;
+            if (*p == 'n') val = '\n';
+            else if (*p == 't') val = '\t';
+            else if (*p == 'r') val = '\r';
+            else if (*p == 'b') val = '\b';
+            else if (*p == 'a') val = '\a';
+            else if (*p == 'f') val = '\f';
+            else if (*p == 'v') val = '\v';
+            else if (*p == '0') val = '\0';
+            else if (*p == '\\') val = '\\';
+            else if (*p == '\'') val = '\'';
+            else val = (unsigned char)*p;
+            p++;
+        } else {
+            val = (unsigned char)*p++;
+        }
+        if (*p == '\'') p++;
     } else if (isdigit((unsigned char)*p)) {
         if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
             val = (int32_t)strtoul(p, (char**)&p, 16);
@@ -754,6 +774,11 @@ static void emit_string_literal(int sec_idx, const char *str, int is_null_termin
             if (*p == 'n') sec_emit_byte(sec_idx, '\n');
             else if (*p == 't') sec_emit_byte(sec_idx, '\t');
             else if (*p == 'r') sec_emit_byte(sec_idx, '\r');
+            else if (*p == 'b') sec_emit_byte(sec_idx, '\b');
+            else if (*p == 'a') sec_emit_byte(sec_idx, '\a');
+            else if (*p == 'f') sec_emit_byte(sec_idx, '\f');
+            else if (*p == 'v') sec_emit_byte(sec_idx, '\v');
+            else if (*p == '0' && (p[1] < '0' || p[1] > '7')) sec_emit_byte(sec_idx, 0);
             else if (*p >= '0' && *p <= '7') {
                 uint32_t oct = 0;
                 int count = 0;
@@ -773,6 +798,8 @@ static void emit_string_literal(int sec_idx, const char *str, int is_null_termin
                 sec_emit_byte(sec_idx, (uint8_t)strtoul(hex, NULL, 16));
             } else if (*p == '\\') sec_emit_byte(sec_idx, '\\');
             else if (*p == '"') sec_emit_byte(sec_idx, '"');
+            else if (*p == '\'') sec_emit_byte(sec_idx, '\'');
+            else if (*p == '?') sec_emit_byte(sec_idx, '?');
             else sec_emit_byte(sec_idx, (uint8_t)*p);
         } else {
             sec_emit_byte(sec_idx, (uint8_t)*p);

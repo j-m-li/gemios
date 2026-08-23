@@ -42,7 +42,8 @@ static void ring_init(xhci_ring_t *ring, size_t size) {
 
 static void ring_setup_link_trb(xhci_ring_t *ring) {
     xhci_trb_t *link = &ring->trbs[ring->size - 1];
-    link->parameter = (uint64_t)ring->phys_addr;
+    link->parameter_lo = (uint32_t)ring->phys_addr;
+    link->parameter_hi = 0;
     link->status = 0;
     link->control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC;
 }
@@ -199,44 +200,48 @@ bool xhci_init(pci_device_t *pci_dev) {
     mmio_write32(g_xhci.op_base + XHCI_OP_CONFIG, g_xhci.max_slots);
 
     /* Setup DCBAA */
-    dcbaa_size = (g_xhci.max_slots + 1) * sizeof(uint64_t);
-    g_xhci.dcbaa = (uint64_t*)kmalloc_aligned(dcbaa_size, 64);
+    dcbaa_size = (g_xhci.max_slots + 1) * 2 * sizeof(uint32_t);
+    g_xhci.dcbaa = (uint32_t*)kmalloc_aligned(dcbaa_size, 64);
     memset(g_xhci.dcbaa, 0, dcbaa_size);
     g_xhci.dcbaa_phys = (phys_addr_t)g_xhci.dcbaa;
 
     hcs2 = mmio_read32(g_xhci.cap_base + XHCI_CAP_HCSPARAMS2);
     max_scratch = XHCI_HCS2_MAX_SCRATCH(hcs2);
     if (max_scratch > 0) {
-        uint64_t *scratch_array;
+        uint32_t *scratch_array;
         uint32_t sc;
-        scratch_array = (uint64_t*)kmalloc_aligned(max_scratch * sizeof(uint64_t), 64);
+        scratch_array = (uint32_t*)kmalloc_aligned(max_scratch * 2 * sizeof(uint32_t), 64);
+        memset(scratch_array, 0, max_scratch * 2 * sizeof(uint32_t));
         for (sc = 0; sc < max_scratch; sc++) {
             phys_addr_t sp_page;
             sp_page = pmm_alloc_page();
-            scratch_array[sc] = (uint64_t)sp_page;
+            scratch_array[2 * sc] = (uint32_t)sp_page;
+            scratch_array[2 * sc + 1] = 0;
         }
-        g_xhci.dcbaa[0] = (uint64_t)(phys_addr_t)scratch_array;
+        g_xhci.dcbaa[0] = (uint32_t)(phys_addr_t)scratch_array;
+        g_xhci.dcbaa[1] = 0;
     }
 
-    mmio_write64(g_xhci.op_base + XHCI_OP_DCBAAP, (uint64_t)g_xhci.dcbaa_phys);
+    mmio_write64(g_xhci.op_base + XHCI_OP_DCBAAP, (uint32_t)g_xhci.dcbaa_phys, 0);
 
     ring_init(&g_xhci.cmd_ring, XHCI_RING_SIZE);
     ring_setup_link_trb(&g_xhci.cmd_ring);
-    mmio_write64(g_xhci.op_base + XHCI_OP_CRCR, (uint64_t)g_xhci.cmd_ring.phys_addr | XHCI_CRCR_RCS);
+    mmio_write64(g_xhci.op_base + XHCI_OP_CRCR, (uint32_t)g_xhci.cmd_ring.phys_addr | XHCI_CRCR_RCS, 0);
 
     ring_init(&g_xhci.evt_ring, XHCI_RING_SIZE);
     g_xhci.evt_cycle = 1;
 
     g_xhci.erst = (xhci_erst_entry_t*)kmalloc_aligned(sizeof(xhci_erst_entry_t), 64);
-    g_xhci.erst->ring_segment_base_addr = (uint64_t)g_xhci.evt_ring.phys_addr;
+    g_xhci.erst->ring_segment_base_lo = (uint32_t)g_xhci.evt_ring.phys_addr;
+    g_xhci.erst->ring_segment_base_hi = 0;
     g_xhci.erst->ring_segment_size = XHCI_RING_SIZE;
     g_xhci.erst->rsvd = 0;
     g_xhci.erst_phys = (phys_addr_t)g_xhci.erst;
 
     rt_intr = g_xhci.rt_base + 0x20;
     mmio_write32(rt_intr + XHCI_INTR_ERSTSZ, 1);
-    mmio_write64(rt_intr + XHCI_INTR_ERDP, (uint64_t)g_xhci.evt_ring.phys_addr);
-    mmio_write64(rt_intr + XHCI_INTR_ERSTBA, (uint64_t)g_xhci.erst_phys);
+    mmio_write64(rt_intr + XHCI_INTR_ERDP, (uint32_t)g_xhci.evt_ring.phys_addr, 0);
+    mmio_write64(rt_intr + XHCI_INTR_ERSTBA, (uint32_t)g_xhci.erst_phys, 0);
     mmio_write32(rt_intr + XHCI_INTR_IMOD, 0);
     mmio_write32(rt_intr + XHCI_INTR_IMAN, XHCI_IMAN_IE | XHCI_IMAN_IP);
 
@@ -291,7 +296,7 @@ static xhci_trb_t *xhci_poll_event(xhci_controller_t *ctrl) {
 
     rt_intr = ctrl->rt_base + 0x20;
     erdp = ctrl->evt_ring.phys_addr + (ctrl->evt_ring.dequeue_idx * sizeof(xhci_trb_t));
-    mmio_write64(rt_intr + XHCI_INTR_ERDP, (uint64_t)erdp | XHCI_ERDP_EHB);
+    mmio_write64(rt_intr + XHCI_INTR_ERDP, (uint32_t)erdp | XHCI_ERDP_EHB, 0);
 
     return trb;
 }
@@ -333,7 +338,7 @@ static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_tr
             uint8_t type;
             type = TRB_GET_TYPE(evt->control);
             if (type == TRB_TYPE_CMD_COMPLETION_EVENT) {
-                if (evt->parameter == (uint64_t)cmd_trb_phys) {
+                if (evt->parameter_lo == (uint32_t)cmd_trb_phys) {
                     uint8_t code;
                     if (out_evt) {
                         memcpy(out_evt, (const void*)evt, sizeof(xhci_trb_t));
@@ -381,7 +386,8 @@ int xhci_cmd_disable_slot(xhci_controller_t *ctrl, uint8_t slot_id) {
 int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx, bool bsr) {
     xhci_trb_t trb;
     memset(&trb, 0, sizeof(trb));
-    trb.parameter = (uint64_t)(phys_addr_t)input_ctx;
+    trb.parameter_lo = (uint32_t)(phys_addr_t)input_ctx;
+    trb.parameter_hi = 0;
     trb.control = TRB_SET_TYPE(TRB_TYPE_ADDRESS_DEVICE) | TRB_SLOT_ID(slot_id) | (bsr ? TRB_BSR : 0);
     return xhci_submit_cmd(ctrl, &trb, NULL);
 }
@@ -389,7 +395,8 @@ int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input
 int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx) {
     xhci_trb_t trb;
     memset(&trb, 0, sizeof(trb));
-    trb.parameter = (uint64_t)(phys_addr_t)input_ctx;
+    trb.parameter_lo = (uint32_t)(phys_addr_t)input_ctx;
+    trb.parameter_hi = 0;
     trb.control = TRB_SET_TYPE(TRB_TYPE_CONFIG_EP) | TRB_SLOT_ID(slot_id);
     return xhci_submit_cmd(ctrl, &trb, NULL);
 }
@@ -397,7 +404,8 @@ int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_c
 int xhci_cmd_evaluate_ctx(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx) {
     xhci_trb_t trb;
     memset(&trb, 0, sizeof(trb));
-    trb.parameter = (uint64_t)(phys_addr_t)input_ctx;
+    trb.parameter_lo = (uint32_t)(phys_addr_t)input_ctx;
+    trb.parameter_hi = 0;
     trb.control = TRB_SET_TYPE(TRB_TYPE_EVALUATE_CTX) | TRB_SLOT_ID(slot_id);
     return xhci_submit_cmd(ctrl, &trb, NULL);
 }
@@ -426,7 +434,8 @@ void xhci_submit_async_trb(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_
     ring = &slot->ep_rings[ep_dci];
 
     memset(&trb, 0, sizeof(trb));
-    trb.parameter = (uint64_t)(phys_addr_t)data;
+    trb.parameter_lo = (uint32_t)(phys_addr_t)data;
+    trb.parameter_hi = 0;
     trb.status = len;
     trb.control = TRB_SET_TYPE(TRB_TYPE_NORMAL) | TRB_IOC | (dir_in ? TRB_ISP : 0);
 
@@ -454,7 +463,7 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
     }
 
     memset((void*)&setup_trb, 0, sizeof(setup_trb));
-    memcpy((void*)&setup_trb.parameter, setup, sizeof(usb_setup_packet_t));
+    memcpy((void*)&setup_trb.parameter_lo, setup, sizeof(usb_setup_packet_t));
     setup_trb.status = 8;
     setup_trb.control = TRB_SET_TYPE(TRB_TYPE_SETUP_STAGE) | TRB_IDT | trt;
     xhci_ring_enqueue_trb(ring, &setup_trb);
@@ -462,14 +471,16 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
     if (len > 0 && data) {
         xhci_trb_t data_trb;
         memset(&data_trb, 0, sizeof(data_trb));
-        data_trb.parameter = (uint64_t)(phys_addr_t)data;
+        data_trb.parameter_lo = (uint32_t)(phys_addr_t)data;
+        data_trb.parameter_hi = 0;
         data_trb.status = len;
         data_trb.control = TRB_SET_TYPE(TRB_TYPE_DATA_STAGE) | ((setup->bmRequestType & USB_DIR_IN) ? TRB_DIR_IN : TRB_DIR_OUT);
         xhci_ring_enqueue_trb(ring, &data_trb);
     }
 
     memset(&status_trb, 0, sizeof(status_trb));
-    status_trb.parameter = 0;
+    status_trb.parameter_lo = 0;
+    status_trb.parameter_hi = 0;
     status_trb.status = 0;
     status_trb.control = TRB_SET_TYPE(TRB_TYPE_STATUS_STAGE) | TRB_IOC |
                          ((trt == TRB_TRT_IN) ? TRB_DIR_OUT : TRB_DIR_IN);
@@ -520,7 +531,8 @@ int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci,
     ring = &slot->ep_rings[ep_dci];
 
     memset(&trb, 0, sizeof(trb));
-    trb.parameter = (uint64_t)(phys_addr_t)data;
+    trb.parameter_lo = (uint32_t)(phys_addr_t)data;
+    trb.parameter_hi = 0;
     trb.status = len;
     trb.control = TRB_SET_TYPE(TRB_TYPE_NORMAL) | TRB_IOC | (dir_in ? TRB_ISP : 0);
 
@@ -631,7 +643,7 @@ void xhci_poll(void) {
             usb_hid_on_transfer_complete(ev_slot, ev_ep, evt->status);
         } else if (type == TRB_TYPE_PORT_STATUS_CHANGE) {
             uint8_t port_id;
-            port_id = (evt->parameter >> 24) & 0xFF;
+            port_id = (evt->parameter_lo >> 24) & 0xFF;
             kprintf("[xHCI Event] Port %u status change\n", port_id);
         }
     }

@@ -20,7 +20,7 @@ int blockdev_register(block_dev_t *bdev) {
     registered_bdevs[bdev_count++] = bdev;
     kprintf("[BlockDev] Registered '%s' (%u blocks, %u bytes/block, %u MB)\n",
             bdev->name, bdev->total_blocks, bdev->block_size,
-            (uint32_t)(((uint64_t)bdev->total_blocks * bdev->block_size) / (1024 * 1024)));
+            (bdev->total_blocks / 1024) * bdev->block_size / 1024);
     return 0;
 }
 

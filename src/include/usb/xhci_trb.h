@@ -99,7 +99,8 @@
 
 /* Generic 16-byte TRB layout */
 struct xhci_trb {
-    volatile uint64_t parameter;
+    volatile uint32_t parameter_lo;
+    volatile uint32_t parameter_hi;
     volatile uint32_t status;
     volatile uint32_t control;
 } PACKED;
@@ -107,7 +108,8 @@ typedef struct xhci_trb xhci_trb_t;
 
 /* Event Ring Segment Table Entry (16 bytes) */
 struct xhci_erst_entry {
-    uint64_t ring_segment_base_addr;
+    uint32_t ring_segment_base_lo;
+    uint32_t ring_segment_base_hi;
     uint32_t ring_segment_size;
     uint32_t rsvd;
 } PACKED;
@@ -127,7 +129,8 @@ typedef struct xhci_slot_ctx xhci_slot_ctx_t;
 struct xhci_ep_ctx {
     uint32_t info1; /* [0:2] EP State, [3:7] Rsvd, [8:9] Mult, [10:14] MaxPStreams, [15] LSA, [16:23] Interval, [24:31] Max ESIT Payload Hi */
     uint32_t info2; /* [0] Force Event, [1:2] CErr, [3:5] EP Type, [6] Rsvd, [7] HID, [8:15] Max Burst Size, [16:31] Max Packet Size */
-    uint64_t tr_dequeue_ptr; /* [0] DCS, [1:3] Rsvd, [4:63] TR Dequeue Pointer */
+    uint32_t tr_dequeue_lo; /* [0] DCS, [1:3] Rsvd, [4:31] TR Dequeue Pointer Low */
+    uint32_t tr_dequeue_hi; /* [0:31] TR Dequeue Pointer High */
     uint32_t tx_info; /* [0:15] Average TRB Length, [16:31] Max ESIT Payload Lo */
     uint32_t rsvd[3];
 } PACKED;

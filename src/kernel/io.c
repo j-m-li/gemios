@@ -36,12 +36,8 @@ uint32_t mmio_read32(uintptr_t addr) {
     return *(volatile uint32_t*)addr;
 }
 
-uint64_t mmio_read64(uintptr_t addr) {
-    uint32_t low;
-    uint32_t high;
-    low = *(volatile uint32_t*)addr;
-    high = *(volatile uint32_t*)(addr + 4);
-    return ((uint64_t)high << 32) | low;
+uint32_t mmio_read64_lo(uintptr_t addr) {
+    return *(volatile uint32_t*)addr;
 }
 
 void mmio_write8(uintptr_t addr, uint8_t val) {
@@ -56,7 +52,7 @@ void mmio_write32(uintptr_t addr, uint32_t val) {
     *(volatile uint32_t*)addr = val;
 }
 
-void mmio_write64(uintptr_t addr, uint64_t val) {
-    *(volatile uint32_t*)addr = (uint32_t)val;
-    *(volatile uint32_t*)(addr + 4) = (uint32_t)(val >> 32);
+void mmio_write64(uintptr_t addr, uint32_t low, uint32_t high) {
+    *(volatile uint32_t*)addr = low;
+    *(volatile uint32_t*)(addr + 4) = high;
 }

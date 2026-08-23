@@ -145,7 +145,8 @@ static void ring_init(xhci_ring_t *ring, uint32_t size) {
     ring->phys_addr = (phys_addr_t)ring->trbs;
 
     last = ring->size - 1;
-    ring->trbs[last].parameter = (uint64_t)ring->phys_addr;
+    ring->trbs[last].parameter_lo = (uint32_t)ring->phys_addr;
+    ring->trbs[last].parameter_hi = 0;
     ring->trbs[last].status = 0;
     ring->trbs[last].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | (ring->cycle ? TRB_CYCLE : 0);
 }
@@ -180,7 +181,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     slot->dev_ctx = (xhci_device_ctx_t*)kmalloc_aligned(sizeof(xhci_device_ctx_t), 64);
     memset(slot->dev_ctx, 0, sizeof(xhci_device_ctx_t));
     slot->dev_ctx_phys = (phys_addr_t)slot->dev_ctx;
-    ctrl->dcbaa[slot_id] = (uint64_t)slot->dev_ctx_phys;
+    ctrl->dcbaa[2 * slot_id] = (uint32_t)slot->dev_ctx_phys;
+    ctrl->dcbaa[2 * slot_id + 1] = 0;
 
     /* 2. Allocate EP0 Transfer Ring */
     ring_init(&slot->ep_rings[1], XHCI_RING_SIZE);
@@ -212,7 +214,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     /* EP0 Context (DCI 1 -> ep[0]) */
     input_ctx->ep[0].info1 = (0 << 16); /* Interval = 0 */
     input_ctx->ep[0].info2 = (3 << 1) | (4 << 3) | (ep0_max_packet << 16); /* CErr=3, EP Type=4 (Control), MaxPacket */
-    input_ctx->ep[0].tr_dequeue_ptr = (uint64_t)slot->ep_rings[1].phys_addr | 1; /* DCS=1 */
+    input_ctx->ep[0].tr_dequeue_lo = (uint32_t)slot->ep_rings[1].phys_addr | 1; /* DCS=1 */
+    input_ctx->ep[0].tr_dequeue_hi = 0;
     input_ctx->ep[0].tx_info = (8 & 0xFFFF); /* Average TRB length */
 
     /* 4. Send Address Device command */
@@ -354,7 +357,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
                 input_ctx->ep[dci - 1].info1 = (interval << 16);
                 input_ctx->ep[dci - 1].info2 = (3 << 1) | (ep_type << 3) | (ep->max_packet_size << 16);
-                input_ctx->ep[dci - 1].tr_dequeue_ptr = (uint64_t)slot->ep_rings[dci].phys_addr | 1;
+                input_ctx->ep[dci - 1].tr_dequeue_lo = (uint32_t)slot->ep_rings[dci].phys_addr | 1;
+                input_ctx->ep[dci - 1].tr_dequeue_hi = 0;
                 input_ctx->ep[dci - 1].tx_info = (ep->max_packet_size & 0xFFFF);
 
                 kprintf("[USB]   Endpoint 0x%02x (DCI %u): Type=%u MaxPacket=%u Interval=%u\n",
