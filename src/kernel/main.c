@@ -24,6 +24,7 @@
 #include "xhci.h"
 #include "blockdev.h"
 #include "fat.h"
+#include "acpi.h"
 #include "shell.h"
 #include "io.h"
 
@@ -139,7 +140,10 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
         kprint_color(0x4F, "[Kernel] No USB xHCI Controller found on PCI bus!\n");
     }
 
-    /* 7. Initialize RTOS Preemptive Scheduler and Tasks */
+    /* 7. Initialize ACPI Subsystem */
+    acpi_init();
+
+    /* 8. Initialize RTOS Preemptive Scheduler and Tasks */
     kprintf("[Kernel] Initializing RTOS Preemptive Scheduler...\n");
     rtos_sched_init();
 

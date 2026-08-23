@@ -21,6 +21,7 @@
 #include "vga.h"
 #include "pit.h"
 #include "string.h"
+#include "acpi.h"
 #include "io.h"
 
 #define CMD_BUFFER_SIZE 256
@@ -804,8 +805,8 @@ static void cmd_reboot(int argc, char **argv) {
 static void cmd_shutdown(int argc, char **argv) {
     UNUSED(argc);
     UNUSED(argv);
-    kprintf("Shutting down system...\n");
-    arch_shutdown();
+    kprintf("Shutting down system via ACPI...\n");
+    acpi_poweroff();
 }
 
 static void cmd_edit(int argc, char **argv) {
