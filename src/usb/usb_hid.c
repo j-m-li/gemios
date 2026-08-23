@@ -20,12 +20,12 @@ static usb_hid_mouse_t mice[MAX_HID_MICE];
 static size_t mouse_count = 0;
 
 /* Circular keyboard buffer */
-static char kbd_buffer[KBD_BUF_SIZE];
+static uint16_t kbd_buffer[KBD_BUF_SIZE];
 static size_t kbd_head = 0;
 static size_t kbd_tail = 0;
 
-/* USB HID Scancode to ASCII table (US Layout) */
-static const char hid_scancode_unmodified[128] = {
+/* USB HID Scancode to ASCII/Keycode table (US Layout) */
+static const uint16_t hid_scancode_unmodified[128] = {
     0, 0, 0, 0,
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
     'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
@@ -47,7 +47,7 @@ static const char hid_scancode_unmodified[128] = {
     KEY_UP,    // 0x52 Up Arrow
 };
 
-static const char hid_scancode_shift[128] = {
+static const uint16_t hid_scancode_shift[128] = {
     0, 0, 0, 0,
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
     'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -69,11 +69,11 @@ static const char hid_scancode_shift[128] = {
     KEY_UP,
 };
 
-void kbd_push_char(char c) {
+void kbd_push_char(uint16_t key) {
     uint32_t flags = irq_save();
     size_t next = (kbd_head + 1) % KBD_BUF_SIZE;
     if (next != kbd_tail) {
-        kbd_buffer[kbd_head] = c;
+        kbd_buffer[kbd_head] = key;
         kbd_head = next;
     }
     irq_restore(flags);
@@ -83,13 +83,13 @@ bool usb_kbd_has_char(void) {
     return kbd_head != kbd_tail;
 }
 
-char usb_kbd_getchar(void) {
+uint16_t usb_kbd_getchar(void) {
     uint32_t flags = irq_save();
     if (kbd_head == kbd_tail) {
         irq_restore(flags);
         return 0;
     }
-    char c = kbd_buffer[kbd_tail];
+    uint16_t c = kbd_buffer[kbd_tail];
     kbd_tail = (kbd_tail + 1) % KBD_BUF_SIZE;
     irq_restore(flags);
     return c;
@@ -97,6 +97,7 @@ char usb_kbd_getchar(void) {
 
 static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
     bool shift = (report->modifiers & 0x22) != 0; // Left or Right Shift
+    bool ctrl  = (report->modifiers & 0x11) != 0; // Left or Right Ctrl
 
     for (int i = 0; i < 6; i++) {
         uint8_t key = report->keycodes[i];
@@ -110,10 +111,31 @@ static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
             }
         }
 
-        if (is_new && key < 128) {
-            char c = shift ? hid_scancode_shift[key] : hid_scancode_unmodified[key];
-            if (c) {
-                kbd_push_char(c);
+        if (is_new) {
+            if (key == 0x29) { kbd_push_char(KEY_ESC); continue; }
+            if (key == 0x3A) { kbd_push_char(KEY_F1); continue; }
+            if (key == 0x3B) { kbd_push_char(KEY_F2); continue; }
+            if (key == 0x3C) { kbd_push_char(KEY_F3); continue; }
+            if (key == 0x4A) { kbd_push_char(KEY_HOME); continue; }
+            if (key == 0x4D) { kbd_push_char(KEY_END); continue; }
+            if (key == 0x4B) { kbd_push_char(KEY_PGUP); continue; }
+            if (key == 0x4E) { kbd_push_char(KEY_PGDN); continue; }
+            if (key == 0x4C) { kbd_push_char(KEY_DELETE); continue; }
+
+            if (key < 128) {
+                uint16_t c = shift ? hid_scancode_shift[key] : hid_scancode_unmodified[key];
+                if (ctrl && c != 0) {
+                    if (c >= 'a' && c <= 'z') {
+                        kbd_push_char((uint16_t)(c - 'a' + 1));
+                        continue;
+                    } else if (c >= 'A' && c <= 'Z') {
+                        kbd_push_char((uint16_t)(c - 'A' + 1));
+                        continue;
+                    }
+                }
+                if (c) {
+                    kbd_push_char(c);
+                }
             }
         }
     }

@@ -15,10 +15,6 @@
 #define PS2_STATUS_PORT  0x64
 #define PS2_COMMAND_PORT 0x64
 
-static bool shift_pressed = false;
-static bool caps_lock = false;
-static bool extended_code = false;
-
 /* US QWERTY Scan Code Set 1 (Normal) */
 static const char ps2_ascii_normal[128] = {
     0,   27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
@@ -90,6 +86,11 @@ static void ps2_wait_read(void) {
     }
 }
 
+static bool shift_pressed = false;
+static bool ctrl_pressed = false;
+static bool caps_lock = false;
+static bool extended_code = false;
+
 static void ps2_keyboard_irq_handler(registers_t *regs) {
     UNUSED(regs);
 
@@ -105,6 +106,11 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
 
     if (extended_code) {
         extended_code = false;
+        if (key == 0x1D) {
+            // Right Ctrl
+            ctrl_pressed = !released;
+            return;
+        }
         if (!released) {
             if (key == 0x48) kbd_push_char(KEY_UP);
             else if (key == 0x50) kbd_push_char(KEY_DOWN);
@@ -112,8 +118,16 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
             else if (key == 0x4D) kbd_push_char(KEY_RIGHT);
             else if (key == 0x47) kbd_push_char(KEY_HOME);
             else if (key == 0x4F) kbd_push_char(KEY_END);
+            else if (key == 0x49) kbd_push_char(KEY_PGUP);
+            else if (key == 0x51) kbd_push_char(KEY_PGDN);
             else if (key == 0x53) kbd_push_char(KEY_DELETE);
         }
+        return;
+    }
+
+    if (key == 0x1D) {
+        // Left Ctrl
+        ctrl_pressed = !released;
         return;
     }
 
@@ -129,18 +143,35 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
         return;
     }
 
-    if (!released && key < 128) {
-        bool use_shift = shift_pressed;
-        char c = use_shift ? ps2_ascii_shift[key] : ps2_ascii_normal[key];
+    if (!released) {
+        if (key == 0x3B) { kbd_push_char(KEY_F1); return; }
+        if (key == 0x3C) { kbd_push_char(KEY_F2); return; }
+        if (key == 0x3D) { kbd_push_char(KEY_F3); return; }
+        if (key == 0x01) { kbd_push_char(KEY_ESC); return; }
 
-        if (caps_lock && c >= 'a' && c <= 'z' && !shift_pressed) {
-            c = c - 'a' + 'A';
-        } else if (caps_lock && c >= 'A' && c <= 'Z' && shift_pressed) {
-            c = c - 'A' + 'a';
-        }
+        if (key < 128) {
+            bool use_shift = shift_pressed;
+            char c = use_shift ? ps2_ascii_shift[key] : ps2_ascii_normal[key];
 
-        if (c != 0) {
-            kbd_push_char(c);
+            if (ctrl_pressed && c != 0) {
+                if (c >= 'a' && c <= 'z') {
+                    kbd_push_char((char)(c - 'a' + 1));
+                    return;
+                } else if (c >= 'A' && c <= 'Z') {
+                    kbd_push_char((char)(c - 'A' + 1));
+                    return;
+                }
+            }
+
+            if (caps_lock && c >= 'a' && c <= 'z' && !shift_pressed) {
+                c = c - 'a' + 'A';
+            } else if (caps_lock && c >= 'A' && c <= 'Z' && shift_pressed) {
+                c = c - 'A' + 'a';
+            }
+
+            if (c != 0) {
+                kbd_push_char(c);
+            }
         }
     }
 }

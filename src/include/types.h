@@ -43,13 +43,30 @@ typedef _Bool bool;
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
 #define ALIGN_DOWN(x, align) ((x) & ~((align) - 1))
 
-/* Special Keyboard Key Codes */
-#define KEY_UP       ((char)0x80)
-#define KEY_DOWN     ((char)0x81)
-#define KEY_LEFT     ((char)0x82)
-#define KEY_RIGHT    ((char)0x83)
-#define KEY_HOME     ((char)0x84)
-#define KEY_END      ((char)0x85)
-#define KEY_DELETE   ((char)0x86)
+/* Special Keyboard Key Codes (values > 255 to avoid colliding with UTF-8 bytes 0x00..0xFF) */
+#define KEY_UP       0x101
+#define KEY_DOWN     0x102
+#define KEY_LEFT     0x103
+#define KEY_RIGHT    0x104
+#define KEY_HOME     0x105
+#define KEY_END      0x106
+#define KEY_DELETE   0x107
+#define KEY_PGUP     0x108
+#define KEY_PGDN     0x109
+#define KEY_F1       0x110
+#define KEY_F2       0x111
+#define KEY_F3       0x112
+#define KEY_ESC      0x1B
+
+/* Common Ctrl Keys */
+#define KEY_CTRL_A   ((char)0x01)
+#define KEY_CTRL_C   ((char)0x03)
+#define KEY_CTRL_K   ((char)0x0B)
+#define KEY_CTRL_N   ((char)0x0E)
+#define KEY_CTRL_O   ((char)0x0F)
+#define KEY_CTRL_Q   ((char)0x11)
+#define KEY_CTRL_S   ((char)0x13)
+#define KEY_CTRL_X   ((char)0x18)
+#define KEY_CTRL_Z   ((char)0x1A)
 
 #endif /* GEMOS_TYPES_H */

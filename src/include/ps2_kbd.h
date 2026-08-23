@@ -9,6 +9,6 @@
 #include "types.h"
 
 void ps2_kbd_init(void);
-void kbd_push_char(char c);
+void kbd_push_char(uint16_t key);
 
 #endif /* GEMOS_PS2_KBD_H */

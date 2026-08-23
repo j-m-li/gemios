@@ -1,6 +1,6 @@
 #!/bin/bash
-# GEMOS RTOS - Comprehensive FATLS & FATCAT Test Suite
-# Tests both FAT16 and FAT32 filesystems
+# GEMOS RTOS - Automated fatmkdir Verification Test Suite
+# Tests directory creation on FAT16 and FAT32 filesystems
 # Public Domain Dedication
 
 set -e
@@ -9,17 +9,17 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
 echo "=========================================================="
-echo " Starting GEMOS FATLS & FATCAT Verification Test Suite"
+echo " Starting GEMOS fatmkdir Verification Test Suite"
 echo "=========================================================="
 
-echo "[1/3] Building kernel and test disk images..."
+echo "[1/3] Building kernel and fresh test disk images..."
 make clean
 make
 
-FAT16_LOG="build/test_fat16_commands.log"
-FAT32_LOG="build/test_fat32_commands.log"
+FAT16_LOG="build/test_fat16_mkdir.log"
+FAT32_LOG="build/test_fat32_mkdir.log"
 
-echo "[2/3] Running FAT16 & FAT32 tests in QEMU VM..."
+echo "[2/3] Running fatmkdir tests in QEMU VM..."
 
 # Test FAT16
 python3 -c "
@@ -36,8 +36,6 @@ cmd = [
     '-device', 'usb-mouse,bus=xhci.0,port=2',
     '-drive', 'if=none,id=usbstick,format=raw,file=build/test_disk.img',
     '-device', 'usb-storage,bus=xhci.0,port=3,drive=usbstick',
-    '-device', 'usb-hub,bus=xhci.0,port=4',
-    '-device', 'usb-mouse,bus=xhci.0,port=4.1'
 ]
 
 proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -57,15 +55,22 @@ def wait_prompt(timeout=8.0):
     start = time.time()
     while time.time() - start < timeout:
         read_more(0.05)
-        if b'gemios> ' in all_output[-30:]:
+        if b'gemios> ' in all_output:
             return True
     return False
 
 def send_cmd(cmd_str):
-    time.sleep(0.5)
+    time.sleep(0.3)
     prompt_idx = len(all_output)
-    proc.stdin.write(cmd_str.encode('utf-8'))
-    proc.stdin.flush()
+    if isinstance(cmd_str, str):
+        cmd_str = cmd_str.encode('utf-8')
+    for i in range(0, len(cmd_str), 4):
+        try:
+            proc.stdin.write(cmd_str[i:i+4])
+            proc.stdin.flush()
+        except Exception:
+            return False
+        time.sleep(0.03)
     start = time.time()
     while time.time() - start < 8.0:
         read_more(0.05)
@@ -75,10 +80,14 @@ def send_cmd(cmd_str):
 
 wait_prompt(timeout=6.0)
 
-for cmd_text in ['fatls\n', 'fatls usb0\n', 'fatcat README.TXT\n', 'fatcat STATUS.TXT\n', 'fatcat NONEXIST.TXT\n', 'fatls baddev\n']:
-    send_cmd(cmd_text)
+send_cmd('fatls usb0\n')
+send_cmd('fatmkdir usb0 TESTDIR\n')
+send_cmd('fatls usb0\n')
+send_cmd('fatmkdir usb0 TESTDIR\n')
+send_cmd('fatmkdir usb0 DOCS\n')
+send_cmd('fatls usb0\n')
 
-read_more(1.0)
+read_more(1.5)
 proc.terminate()
 try:
     proc.wait(timeout=2.0)
@@ -106,8 +115,6 @@ cmd = [
     '-device', 'usb-mouse,bus=xhci.0,port=2',
     '-drive', 'if=none,id=usbstick,format=raw,file=build/test_fat32.img',
     '-device', 'usb-storage,bus=xhci.0,port=3,drive=usbstick',
-    '-device', 'usb-hub,bus=xhci.0,port=4',
-    '-device', 'usb-mouse,bus=xhci.0,port=4.1'
 ]
 
 proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -127,15 +134,22 @@ def wait_prompt(timeout=8.0):
     start = time.time()
     while time.time() - start < timeout:
         read_more(0.05)
-        if b'gemios> ' in all_output[-30:]:
+        if b'gemios> ' in all_output:
             return True
     return False
 
 def send_cmd(cmd_str):
-    time.sleep(0.5)
+    time.sleep(0.3)
     prompt_idx = len(all_output)
-    proc.stdin.write(cmd_str.encode('utf-8'))
-    proc.stdin.flush()
+    if isinstance(cmd_str, str):
+        cmd_str = cmd_str.encode('utf-8')
+    for i in range(0, len(cmd_str), 4):
+        try:
+            proc.stdin.write(cmd_str[i:i+4])
+            proc.stdin.flush()
+        except Exception:
+            return False
+        time.sleep(0.03)
     start = time.time()
     while time.time() - start < 8.0:
         read_more(0.05)
@@ -145,10 +159,12 @@ def send_cmd(cmd_str):
 
 wait_prompt(timeout=6.0)
 
-for cmd_text in ['fatls\n', 'fatls usb0\n', 'fatcat README.TXT\n', 'fatcat FAT32DOC.TXT\n', 'fatcat STATUS.TXT\n', 'fatcat NOFILE.TXT\n']:
-    send_cmd(cmd_text)
+send_cmd('fatls usb0\n')
+send_cmd('fatmkdir usb0 FAT32DIR\n')
+send_cmd('fatls usb0\n')
+send_cmd('fatmkdir usb0 FAT32DIR\n')
 
-read_more(1.0)
+read_more(1.5)
 proc.terminate()
 try:
     proc.wait(timeout=2.0)
@@ -163,26 +179,24 @@ with open('$FAT32_LOG', 'w') as f:
 
 echo "[3/3] Verifying Test Results & Assertions..."
 echo "----------------------------------------------------------"
-echo "=== FAT16 Test Log ==="
+echo "=== FAT16 mkdir Log ==="
 cat "$FAT16_LOG"
 echo "----------------------------------------------------------"
-echo "=== FAT32 Test Log ==="
+echo "=== FAT32 mkdir Log ==="
 cat "$FAT32_LOG"
 echo "----------------------------------------------------------"
 
-# FAT16 Assertions
-grep -q "Filesystem on usb0 (FAT16)" "$FAT16_LOG" && echo "[PASS] FAT16: fatls detected FAT16" || { echo "[FAIL] FAT16 fatls"; exit 1; }
-grep -q "Welcome to GEMOS RTOS on USB Mass Storage (FAT16)" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat read README.TXT" || { echo "[FAIL] FAT16 fatcat README"; exit 1; }
-grep -q "All systems operational" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat read STATUS.TXT" || { echo "[FAIL] FAT16 fatcat STATUS"; exit 1; }
-grep -q "File 'NONEXIST.TXT' not found" "$FAT16_LOG" && echo "[PASS] FAT16: fatcat handled missing file error" || { echo "[FAIL] FAT16 missing file"; exit 1; }
-grep -q "Block device 'baddev' not found" "$FAT16_LOG" && echo "[PASS] FAT16: fatls handled invalid device error" || { echo "[FAIL] FAT16 invalid device"; exit 1; }
+# Assertions for FAT16
+grep -q "Directory 'TESTDIR' created successfully" "$FAT16_LOG" && echo "[PASS] FAT16: Created TESTDIR successfully" || { echo "[FAIL] FAT16 TESTDIR creation"; exit 1; }
+grep -q "TESTDIR          <DIR>" "$FAT16_LOG" && echo "[PASS] FAT16: TESTDIR listed with <DIR> attribute" || { echo "[FAIL] FAT16 TESTDIR listing"; exit 1; }
+grep -q "Directory or file 'TESTDIR' already exists" "$FAT16_LOG" && echo "[PASS] FAT16: Duplicate directory detection" || { echo "[FAIL] FAT16 duplicate detection"; exit 1; }
+grep -q "Directory 'DOCS' created successfully" "$FAT16_LOG" && echo "[PASS] FAT16: Created DOCS successfully" || { echo "[FAIL] FAT16 DOCS creation"; exit 1; }
+grep -q "DOCS             <DIR>" "$FAT16_LOG" && echo "[PASS] FAT16: DOCS listed with <DIR> attribute" || { echo "[FAIL] FAT16 DOCS listing"; exit 1; }
 
-# FAT32 Assertions
-grep -q "Filesystem on usb0 (FAT32)" "$FAT32_LOG" && echo "[PASS] FAT32: fatls detected FAT32" || { echo "[FAIL] FAT32 fatls"; exit 1; }
-grep -q "Welcome to GEMOS RTOS on USB Mass Storage (FAT32)" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read README.TXT" || { echo "[FAIL] FAT32 fatcat README"; exit 1; }
-grep -q "Supports cluster traversal and 32-bit FAT table lookups" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read FAT32DOC.TXT" || { echo "[FAIL] FAT32 fatcat FAT32DOC"; exit 1; }
-grep -q "FAT32 verification passed" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat read STATUS.TXT" || { echo "[FAIL] FAT32 fatcat STATUS"; exit 1; }
-grep -q "File 'NOFILE.TXT' not found" "$FAT32_LOG" && echo "[PASS] FAT32: fatcat handled missing file error" || { echo "[FAIL] FAT32 missing file"; exit 1; }
+# Assertions for FAT32
+grep -q "Directory 'FAT32DIR' created successfully" "$FAT32_LOG" && echo "[PASS] FAT32: Created FAT32DIR successfully" || { echo "[FAIL] FAT32 FAT32DIR creation"; exit 1; }
+grep -q "FAT32DIR         <DIR>" "$FAT32_LOG" && echo "[PASS] FAT32: FAT32DIR listed with <DIR> attribute" || { echo "[FAIL] FAT32 FAT32DIR listing"; exit 1; }
+grep -q "Directory or file 'FAT32DIR' already exists" "$FAT32_LOG" && echo "[PASS] FAT32: Duplicate directory detection" || { echo "[FAIL] FAT32 duplicate detection"; exit 1; }
 
 echo ""
-echo ">>> ALL FATLS & FATCAT TESTS PASSED SUCCESSFULLY ON BOTH FAT16 AND FAT32! <<<"
+echo ">>> ALL FATMKDIR TESTS PASSED SUCCESSFULLY ON FAT16 & FAT32! <<<"

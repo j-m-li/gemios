@@ -14,6 +14,7 @@
 #include "xhci.h"
 #include "blockdev.h"
 #include "fat.h"
+#include "editor.h"
 #include "mmu.h"
 #include "heap.h"
 #include "pci.h"
@@ -72,6 +73,8 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  writesec <dev> <lba> <s> - Write text into a block on storage\n");
     kprintf("  fatls [dev]           - List files on FAT filesystem (default: usb0)\n");
     kprintf("  fatcat [dev] <file>   - Read file content from FAT (default: usb0)\n");
+    kprintf("  fatmkdir [dev] <dir>  - Create a directory in FAT filesystem\n");
+    kprintf("  edit [dev] <file>     - Fullscreen MS-DOS style UTF-8 text editor\n");
     kprintf("  mouse                 - Show current USB mouse coordinates\n");
     kprintf("  bench                 - Run RTOS context-switch benchmark\n");
     kprintf("  uptime                - Show system uptime\n");
@@ -311,7 +314,10 @@ static void cmd_fatls(int argc, char **argv) {
         return;
     }
 
-    fat_list_root(&fs);
+    int res = fat_list_root(&fs);
+    if (res < 0) {
+        kprint_color(0x4F, "Failed to read root directory from '%s'.\n", dev_name);
+    }
 }
 
 static void cmd_fatcat(int argc, char **argv) {
@@ -350,15 +356,40 @@ static void cmd_fatcat(int argc, char **argv) {
     size_t out_len = 0;
     if (fat_read_file(&fs, filename, buf, buf_size - 1, &out_len) == 0) {
         kprintf("\n--- %s (%u bytes) ---\n", filename, (uint32_t)out_len);
-        for (size_t i = 0; i < out_len; i++) {
+        size_t i = 0;
+        while (i < out_len) {
             char ch = buf[i];
-            if (ch == '\r') continue;
-            if (ch == '\n' || (ch >= 32 && ch <= 126) || ch == '\t') {
+            if (ch == '\r') {
+                i++;
+                continue;
+            }
+            if (ch == '\n' || ch == '\t') {
                 vga_putc(ch);
                 serial_putc(ch);
+                i++;
+            } else if ((uint8_t)ch < 128) {
+                if (ch >= 32 && ch <= 126) {
+                    vga_putc(ch);
+                    serial_putc(ch);
+                } else {
+                    vga_putc('.');
+                    serial_putc('.');
+                }
+                i++;
             } else {
-                vga_putc('.');
-                serial_putc('.');
+                // Multi-byte UTF-8 character
+                uint32_t cp = 0;
+                int c_len = utf8_decode(&buf[i], &cp);
+                if (c_len <= 0) c_len = 1;
+
+                uint8_t glyph = utf8_to_cp437(cp);
+                vga_putc((char)glyph);
+
+                // Pass full UTF-8 byte sequence to serial
+                for (int k = 0; k < c_len && i + k < out_len; k++) {
+                    serial_putc(buf[i + k]);
+                }
+                i += c_len;
             }
         }
         kprintf("\n--- End of file ---\n");
@@ -367,6 +398,42 @@ static void cmd_fatcat(int argc, char **argv) {
     }
 
     kfree(buf);
+}
+
+static void cmd_fatmkdir(int argc, char **argv) {
+    const char *dev_name = "usb0";
+    const char *dirname = NULL;
+
+    if (argc == 2) {
+        dirname = argv[1];
+    } else if (argc >= 3) {
+        dev_name = argv[1];
+        dirname = argv[2];
+    } else {
+        kprintf("Usage: fatmkdir [dev] <dirname>\nExample: fatmkdir DOCS or fatmkdir usb0 TESTDIR\n");
+        return;
+    }
+
+    block_dev_t *bdev = blockdev_get(dev_name);
+    if (!bdev) {
+        kprint_color(0x4F, "Block device '%s' not found.\n", dev_name);
+        return;
+    }
+
+    fat_fs_t fs;
+    if (fat_mount(bdev, &fs) != 0) {
+        kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
+        return;
+    }
+
+    int res = fat_mkdir(&fs, dirname);
+    if (res == 0) {
+        kprint_color(0x0A, "Directory '%s' created successfully on '%s'.\n", dirname, dev_name);
+    } else if (res == -2) {
+        kprint_color(0x4F, "Directory or file '%s' already exists on '%s'.\n", dirname, dev_name);
+    } else {
+        kprint_color(0x4F, "Failed to create directory '%s' on '%s' (code %d).\n", dirname, dev_name, res);
+    }
 }
 
 static void cmd_mouse(int argc, char **argv) {
@@ -434,6 +501,20 @@ static void cmd_reboot(int argc, char **argv) {
     kprintf("Rebooting system...\n");
     outb(0x64, 0xFE);
     __asm__ volatile ("lidt (0); int $3");
+}
+
+static void cmd_edit(int argc, char **argv) {
+    const char *dev_name = "usb0";
+    const char *filename = "UNTITLED.TXT";
+
+    if (argc == 2) {
+        filename = argv[1];
+    } else if (argc >= 3) {
+        dev_name = argv[1];
+        filename = argv[2];
+    }
+
+    editor_open(dev_name, filename);
 }
 
 void shell_execute_command(char *cmd_line) {
@@ -504,6 +585,8 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "writesec") == 0) cmd_writesec(argc, argv);
     else if (strcmp(argv[0], "fatls") == 0) cmd_fatls(argc, argv);
     else if (strcmp(argv[0], "fatcat") == 0) cmd_fatcat(argc, argv);
+    else if (strcmp(argv[0], "fatmkdir") == 0) cmd_fatmkdir(argc, argv);
+    else if (strcmp(argv[0], "edit") == 0) cmd_edit(argc, argv);
     else if (strcmp(argv[0], "mouse") == 0) cmd_mouse(argc, argv);
     else if (strcmp(argv[0], "bench") == 0) cmd_bench(argc, argv);
     else if (strcmp(argv[0], "uptime") == 0) cmd_uptime(argc, argv);
@@ -514,29 +597,36 @@ void shell_execute_command(char *cmd_line) {
     }
 }
 
-static char shell_get_char(void) {
-    if (usb_kbd_has_char()) {
-        return usb_kbd_getchar();
+static int get_serial_byte_timed(int loops) {
+    while (!serial_has_char() && --loops > 0) {
+        io_wait();
     }
     if (serial_has_char()) {
-        char c = serial_getchar();
+        return (uint8_t)serial_getchar();
+    }
+    return -1;
+}
+
+static int shell_get_char(void) {
+    if (usb_kbd_has_char()) {
+        return (int)usb_kbd_getchar();
+    }
+    if (serial_has_char()) {
+        uint8_t c = (uint8_t)serial_getchar();
         // Parse ANSI Escape Sequence: ESC [ A / B / C / D
         if (c == 27) { // ESC
-            if (serial_has_char()) {
-                char c2 = serial_getchar();
-                if (c2 == '[') {
-                    if (serial_has_char()) {
-                        char c3 = serial_getchar();
-                        if (c3 == 'A') return KEY_UP;
-                        if (c3 == 'B') return KEY_DOWN;
-                        if (c3 == 'C') return KEY_RIGHT;
-                        if (c3 == 'D') return KEY_LEFT;
-                    }
-                }
+            int c2 = get_serial_byte_timed(500000);
+            if (c2 == '[') {
+                int c3 = get_serial_byte_timed(500000);
+                if (c3 == 'A') return KEY_UP;
+                if (c3 == 'B') return KEY_DOWN;
+                if (c3 == 'C') return KEY_RIGHT;
+                if (c3 == 'D') return KEY_LEFT;
             }
-            return 0;
+            if (c2 == -1) return 0;
+            return c2;
         }
-        return c;
+        return (int)c;
     }
     return 0;
 }
@@ -555,7 +645,7 @@ void shell_task(void *arg) {
     while (1) {
         xhci_poll();
 
-        char c = shell_get_char();
+        int c = shell_get_char();
         if (c != 0) {
             if (c == '\n' || c == '\r') {
                 kprintf("\n");

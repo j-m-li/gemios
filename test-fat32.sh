@@ -22,7 +22,7 @@ import subprocess, time, os, sys
 log_file = open('$OUTPUT_LOG', 'w')
 cmd = [
     'qemu-system-i386',
-    '-kernel', 'build/gemos.elf',
+    '-kernel', 'build/gemios.elf',
     '-m', '256M',
     '-display', 'none',
     '-serial', 'file:$SERIAL_LOG',

@@ -56,9 +56,9 @@ void usb_hid_poll(void);
 void usb_hid_on_transfer_complete(uint8_t slot_id, uint8_t ep_dci, uint32_t status);
 
 /* Shared Keyboard API */
-void kbd_push_char(char c);
+void kbd_push_char(uint16_t key);
 bool usb_kbd_has_char(void);
-char usb_kbd_getchar(void);
+uint16_t usb_kbd_getchar(void);
 
 /* Mouse interface for system */
 void usb_mouse_get_state(int32_t *x, int32_t *y, uint8_t *buttons);

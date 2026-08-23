@@ -19,7 +19,7 @@ ASM_SRCS = $(shell find src -name '*.S')
 OBJS = $(patsubst src/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
        $(patsubst src/%.S, $(BUILD_DIR)/%.o, $(ASM_SRCS))
 
-KERNEL_ELF = $(BUILD_DIR)/gemos.elf
+KERNEL_ELF = $(BUILD_DIR)/gemios.elf
 DISK_IMG = $(BUILD_DIR)/test_disk.img
 FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 

@@ -77,10 +77,12 @@ typedef enum {
 typedef struct fat_fs {
     block_dev_t *bdev;
     fat_type_t type;
+    uint32_t lba_offset;
     uint32_t bytes_per_sector;
     uint32_t sectors_per_cluster;
     uint32_t bytes_per_cluster;
     uint32_t reserved_sectors;
+    uint32_t num_fats;
     uint32_t fat_start_sector;
     uint32_t fat_size_sectors;
     uint32_t root_dir_start_sector;
@@ -93,5 +95,7 @@ typedef struct fat_fs {
 int fat_mount(block_dev_t *bdev, fat_fs_t *fs);
 int fat_list_root(fat_fs_t *fs);
 int fat_read_file(fat_fs_t *fs, const char *filename, void *buf, size_t max_len, size_t *out_len);
+int fat_write_file(fat_fs_t *fs, const char *filename, const void *buf, size_t len);
+int fat_mkdir(fat_fs_t *fs, const char *dirname);
 
 #endif /* GEMOS_FAT_H */

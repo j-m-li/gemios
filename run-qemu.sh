@@ -21,7 +21,7 @@ for arg in "$@"; do
 done
 
 # Build kernel and disk image if needed
-if [ ! -f "build/gemos.elf" ] || [ ! -f "$DISK_FILE" ]; then
+if [ ! -f "build/gemios.elf" ] || [ ! -f "$DISK_FILE" ]; then
     echo "[*] Building GEMOS RTOS and disk images..."
     make
 fi
@@ -40,7 +40,7 @@ echo "   - Devices:         USB Keyboard, USB Mouse, USB Storage, USB Hub"
 echo "   - Downstream:      Secondary USB Mouse on USB Hub"
 echo "=========================================================="
 
-exec $QEMU -kernel build/gemos.elf -m 256M \
+exec $QEMU -kernel build/gemios.elf -m 256M \
     $GRAPHICS_FLAG \
     -device qemu-xhci,id=xhci,p2=8,p3=8 \
     -device usb-kbd,bus=xhci.0,port=1 \
