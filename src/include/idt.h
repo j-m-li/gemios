@@ -18,7 +18,8 @@ struct idt_entry {
 
 struct idt_ptr {
     uint16_t limit;
-    uint32_t base;
+    uint16_t base_low;
+    uint16_t base_high;
 } PACKED;
 
 /* Ring 0 Interrupt Stack Frame (56 bytes total) */

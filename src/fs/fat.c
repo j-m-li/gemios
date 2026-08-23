@@ -28,35 +28,50 @@ static bool fat_name_equals(const char *s1, const char *s2) {
     return (*s1 == '\0' && *s2 == '\0');
 }
 
-static bool is_valid_fat_bpb(const uint8_t *sector, uint32_t *out_total_sectors) {
-    fat_bpb_t *bpb;
-    uint32_t total;
+static uint16_t fat_read_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
 
-    bpb = (fat_bpb_t*)sector;
+static uint32_t fat_read_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static bool is_valid_fat_bpb(const uint8_t *sector, uint32_t *out_total_sectors) {
+    uint32_t total;
+    uint16_t bytes_per_sec;
+    uint8_t sec_per_clus;
+    uint16_t rsvd_sec_cnt;
+    uint8_t num_fats;
+    uint16_t tot_sec_16;
+    uint32_t tot_sec_32;
 
     /* Check boot jump instruction (0xEB or 0xE9) */
     if (sector[0] != 0xEB && sector[0] != 0xE9) {
         return false;
     }
 
+    bytes_per_sec = fat_read_le16(&sector[11]);
     /* Bytes per sector must be standard 512, 1024, 2048, or 4096 */
-    if (bpb->bytes_per_sector != 512 && bpb->bytes_per_sector != 1024 &&
-        bpb->bytes_per_sector != 2048 && bpb->bytes_per_sector != 4096) {
+    if (bytes_per_sec != 512 && bytes_per_sec != 1024 &&
+        bytes_per_sec != 2048 && bytes_per_sec != 4096) {
         return false;
     }
 
+    sec_per_clus = sector[13];
     /* Sectors per cluster must be non-zero power of 2 (1, 2, 4, 8, 16, 32, 64, 128) */
-    if (bpb->sectors_per_cluster == 0 || (bpb->sectors_per_cluster & (bpb->sectors_per_cluster - 1)) != 0) {
+    if (sec_per_clus == 0 || (sec_per_clus & (sec_per_clus - 1)) != 0) {
         return false;
     }
 
+    rsvd_sec_cnt = fat_read_le16(&sector[14]);
     /* Reserved sector count must be >= 1 */
-    if (bpb->reserved_sector_count == 0) {
+    if (rsvd_sec_cnt == 0) {
         return false;
     }
 
+    num_fats = sector[16];
     /* Num FATs typically 1 or 2 */
-    if (bpb->num_fats == 0 || bpb->num_fats > 4) {
+    if (num_fats == 0 || num_fats > 4) {
         return false;
     }
 
@@ -65,7 +80,9 @@ static bool is_valid_fat_bpb(const uint8_t *sector, uint32_t *out_total_sectors)
         return false;
     }
 
-    total = (bpb->total_sectors_16 != 0) ? bpb->total_sectors_16 : bpb->total_sectors_32;
+    tot_sec_16 = fat_read_le16(&sector[19]);
+    tot_sec_32 = fat_read_le32(&sector[32]);
+    total = (tot_sec_16 != 0) ? (uint32_t)tot_sec_16 : tot_sec_32;
     if (total == 0) {
         return false;
     }
@@ -78,7 +95,6 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
     uint8_t sector[512];
     uint32_t lba_offset;
     uint32_t total_sectors;
-    fat_bpb_t *bpb;
     uint32_t data_start_relative;
     uint32_t data_sectors;
 
@@ -103,8 +119,8 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
         int p;
         for (p = 0; p < 4; p++) {
             uint8_t *part_entry = &sector[0x1BE + (p * 16)];
-            uint32_t part_start = *(uint32_t*)&part_entry[8];
-            uint32_t part_size = *(uint32_t*)&part_entry[12];
+            uint32_t part_start = fat_read_le32(&part_entry[8]);
+            uint32_t part_size = fat_read_le32(&part_entry[12]);
 
             if (part_start > 0 && part_size > 0) {
                 uint8_t part_sector[512];
@@ -125,30 +141,33 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
         return -1; /* Not a valid FAT filesystem */
     }
 
-    bpb = (fat_bpb_t*)sector;
     fs->lba_offset = lba_offset;
-    fs->bytes_per_sector = bpb->bytes_per_sector;
-    fs->sectors_per_cluster = bpb->sectors_per_cluster;
+    fs->bytes_per_sector = (uint32_t)fat_read_le16(&sector[11]);
+    fs->sectors_per_cluster = (uint32_t)sector[13];
     fs->bytes_per_cluster = fs->bytes_per_sector * fs->sectors_per_cluster;
-    fs->reserved_sectors = bpb->reserved_sector_count;
-    fs->num_fats = bpb->num_fats;
+    fs->reserved_sectors = (uint32_t)fat_read_le16(&sector[14]);
+    fs->num_fats = (uint32_t)sector[16];
 
-    if (bpb->fat_size_16 != 0) {
-        /* FAT12 or FAT16 */
-        fs->fat_size_sectors = bpb->fat_size_16;
-        fs->fat_start_sector = fs->lba_offset + fs->reserved_sectors;
-        fs->root_dir_start_sector = fs->fat_start_sector + (fs->num_fats * fs->fat_size_sectors);
-        fs->root_dir_sectors = ((bpb->root_entry_count * 32) + (fs->bytes_per_sector - 1)) / fs->bytes_per_sector;
-        fs->data_start_sector = fs->root_dir_start_sector + fs->root_dir_sectors;
-        fs->root_cluster = 0;
-    } else {
-        /* FAT32 */
-        fs->fat_size_sectors = bpb->fat_size_32;
-        fs->fat_start_sector = fs->lba_offset + fs->reserved_sectors;
-        fs->root_dir_start_sector = 0;
-        fs->root_dir_sectors = 0;
-        fs->data_start_sector = fs->fat_start_sector + (fs->num_fats * fs->fat_size_sectors);
-        fs->root_cluster = bpb->root_cluster;
+    {
+        uint16_t fat_sz16 = fat_read_le16(&sector[22]);
+        uint16_t root_ent_cnt = fat_read_le16(&sector[17]);
+        if (fat_sz16 != 0) {
+            /* FAT12 or FAT16 */
+            fs->fat_size_sectors = (uint32_t)fat_sz16;
+            fs->fat_start_sector = fs->lba_offset + fs->reserved_sectors;
+            fs->root_dir_start_sector = fs->fat_start_sector + (fs->num_fats * fs->fat_size_sectors);
+            fs->root_dir_sectors = (((uint32_t)root_ent_cnt * 32) + (fs->bytes_per_sector - 1)) / fs->bytes_per_sector;
+            fs->data_start_sector = fs->root_dir_start_sector + fs->root_dir_sectors;
+            fs->root_cluster = 0;
+        } else {
+            /* FAT32 */
+            fs->fat_size_sectors = fat_read_le32(&sector[36]);
+            fs->fat_start_sector = fs->lba_offset + fs->reserved_sectors;
+            fs->root_dir_start_sector = 0;
+            fs->root_dir_sectors = 0;
+            fs->data_start_sector = fs->fat_start_sector + (fs->num_fats * fs->fat_size_sectors);
+            fs->root_cluster = fat_read_le32(&sector[44]);
+        }
     }
 
     if (fs->fat_size_sectors == 0 || fs->bytes_per_cluster == 0) {

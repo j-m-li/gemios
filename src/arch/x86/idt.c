@@ -152,8 +152,12 @@ uint32_t isr_handler(registers_t *regs) {
 }
 
 void idt_init(void) {
+    uint32_t base;
+
     idtp.limit = (sizeof(struct idt_entry) * IDT_ENTRIES) - 1;
-    idtp.base = (uint32_t)&idt;
+    base = (uint32_t)&idt;
+    idtp.base_low = (uint16_t)(base & 0xFFFF);
+    idtp.base_high = (uint16_t)((base >> 16) & 0xFFFF);
 
     memset(&idt, 0, sizeof(struct idt_entry) * IDT_ENTRIES);
     memset(&interrupt_handlers, 0, sizeof(isr_handler_t) * IDT_ENTRIES);

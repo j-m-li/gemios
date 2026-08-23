@@ -22,7 +22,8 @@ struct gdt_entry {
 
 struct gdt_ptr {
     uint16_t limit;
-    uint32_t base;
+    uint16_t base_low;
+    uint16_t base_high;
 } PACKED;
 
 void gdt_init(void);

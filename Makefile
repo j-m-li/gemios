@@ -6,10 +6,10 @@ CFLAGS = -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
          -ansi -pedantic -Werror \
          -Wno-unused-parameter -Wno-unused-function -O0 \
          -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell
-#CC = ../ccia/ccia-i386
-#CFLAGS =  \
-#         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell \
-#	-I../ccia/include -I../ccia/include/riscv32 \
+CC = ../ccia/ccia-i386
+CFLAGS =  \
+         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell \
+	-I../ccia/include -I../ccia/include/riscv32 \
 
 ASFLAGS = -m32
 

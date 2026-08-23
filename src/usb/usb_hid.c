@@ -126,6 +126,8 @@ static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
         }
 
         if (is_new) {
+            uint16_t c;
+
             if (key == 0x29) { kbd_push_char(KEY_ESC); continue; }
             if (key == 0x3A) { kbd_push_char(KEY_F1); continue; }
             if (key == 0x3B) { kbd_push_char(KEY_F2); continue; }
@@ -137,7 +139,6 @@ static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
             if (key == 0x4C) { kbd_push_char(KEY_DELETE); continue; }
 
             if (key < 128) {
-                uint16_t c;
                 c = shift ? hid_scancode_shift[key] : hid_scancode_unmodified[key];
                 if (ctrl && c != 0) {
                     if (c >= 'a' && c <= 'z') {

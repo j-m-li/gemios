@@ -19,6 +19,9 @@
 #define USB_MSC_CSW_STATUS_FAILED      0x01
 #define USB_MSC_CSW_STATUS_PHASE_ERROR 0x02
 
+#define USB_MSC_CBW_SIZE 31
+#define USB_MSC_CSW_SIZE 13
+
 /* Command Block Wrapper (31 bytes) */
 struct usb_msc_cbw {
     uint32_t dCBWSignature;

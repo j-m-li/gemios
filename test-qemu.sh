@@ -38,7 +38,7 @@ cmd = [
 
 proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=log_file, stderr=subprocess.STDOUT, text=True)
 
-time.sleep(1.2) # Wait for boot
+time.sleep(2.0) # Wait for boot & USB device enumeration
 
 # Send test commands via keyboard
 commands = [

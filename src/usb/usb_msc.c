@@ -25,25 +25,44 @@ static int msc_bot_transfer(usb_msc_dev_t *msc, const void *cdb, uint8_t cdb_len
                             void *data, uint32_t data_len, bool dir_in) {
     xhci_controller_t *ctrl;
     uint32_t tag;
-    usb_msc_cbw_t cbw;
+    uint8_t cbw[USB_MSC_CBW_SIZE];
+    uint8_t csw[USB_MSC_CSW_SIZE];
+    uint32_t csw_sig;
+    uint32_t csw_tag;
+    uint8_t csw_status;
     int res;
-    usb_msc_csw_t csw;
 
     ctrl = xhci_get_controller();
     tag = ++msc_tag;
 
-    /* 1. Prepare Command Block Wrapper (CBW) */
-    memset(&cbw, 0, sizeof(cbw));
-    cbw.dCBWSignature = USB_MSC_CBW_SIGNATURE;
-    cbw.dCBWTag = tag;
-    cbw.dCBWDataTransferLength = data_len;
-    cbw.bmCBWFlags = dir_in ? USB_MSC_CBW_FLAG_IN : USB_MSC_CBW_FLAG_OUT;
-    cbw.bCBWLUN = 0;
-    cbw.bCBWCBLength = cdb_len;
-    memcpy(cbw.CBWCB, cdb, cdb_len);
+    /* 1. Prepare Command Block Wrapper (CBW - exactly 31 bytes) */
+    memset(cbw, 0, USB_MSC_CBW_SIZE);
+    /* dCBWSignature = 0x43425355 ("USBC") */
+    cbw[0] = 0x55;
+    cbw[1] = 0x53;
+    cbw[2] = 0x42;
+    cbw[3] = 0x43;
+    /* dCBWTag */
+    cbw[4] = (uint8_t)(tag & 0xFF);
+    cbw[5] = (uint8_t)((tag >> 8) & 0xFF);
+    cbw[6] = (uint8_t)((tag >> 16) & 0xFF);
+    cbw[7] = (uint8_t)((tag >> 24) & 0xFF);
+    /* dCBWDataTransferLength */
+    cbw[8] = (uint8_t)(data_len & 0xFF);
+    cbw[9] = (uint8_t)((data_len >> 8) & 0xFF);
+    cbw[10] = (uint8_t)((data_len >> 16) & 0xFF);
+    cbw[11] = (uint8_t)((data_len >> 24) & 0xFF);
+    /* bmCBWFlags */
+    cbw[12] = dir_in ? USB_MSC_CBW_FLAG_IN : USB_MSC_CBW_FLAG_OUT;
+    /* bCBWLUN */
+    cbw[13] = 0;
+    /* bCBWCBLength */
+    cbw[14] = cdb_len;
+    /* CBWCB */
+    memcpy(&cbw[15], cdb, cdb_len);
 
-    /* Send CBW via Bulk OUT */
-    res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->out_dci, &cbw, sizeof(cbw), false);
+    /* Send CBW via Bulk OUT (31 bytes) */
+    res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->out_dci, cbw, USB_MSC_CBW_SIZE, false);
     if (res < 0) {
         kprint_color(0x4F, "[MSC] Failed to send CBW (err %d)\n", res);
         return res;
@@ -60,21 +79,25 @@ static int msc_bot_transfer(usb_msc_dev_t *msc, const void *cdb, uint8_t cdb_len
         }
     }
 
-    /* 3. Receive Command Status Wrapper (CSW) via Bulk IN */
-    memset(&csw, 0, sizeof(csw));
-    res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->in_dci, &csw, sizeof(csw), true);
+    /* 3. Receive Command Status Wrapper (CSW - exactly 13 bytes) via Bulk IN */
+    memset(csw, 0, USB_MSC_CSW_SIZE);
+    res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->in_dci, csw, USB_MSC_CSW_SIZE, true);
     if (res < 0) {
         kprint_color(0x4F, "[MSC] Failed to receive CSW (err %d)\n", res);
         return res;
     }
 
-    if (csw.dCSWSignature != USB_MSC_CSW_SIGNATURE || csw.dCSWTag != tag) {
+    csw_sig = (uint32_t)csw[0] | ((uint32_t)csw[1] << 8) | ((uint32_t)csw[2] << 16) | ((uint32_t)csw[3] << 24);
+    csw_tag = (uint32_t)csw[4] | ((uint32_t)csw[5] << 8) | ((uint32_t)csw[6] << 16) | ((uint32_t)csw[7] << 24);
+    csw_status = csw[12];
+
+    if (csw_sig != USB_MSC_CSW_SIGNATURE || csw_tag != tag) {
         kprint_color(0x4F, "[MSC] CSW Signature/Tag mismatch! (sig=0x%x, tag=0x%x)\n",
-                     csw.dCSWSignature, csw.dCSWTag);
+                     csw_sig, csw_tag);
         return -1;
     }
 
-    return (csw.bCSWStatus == USB_MSC_CSW_STATUS_PASSED) ? 0 : -(int)csw.bCSWStatus;
+    return (csw_status == USB_MSC_CSW_STATUS_PASSED) ? 0 : -(int)csw_status;
 }
 
 static int scsi_inquiry(usb_msc_dev_t *msc) {

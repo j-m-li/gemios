@@ -950,21 +950,22 @@ static void assemble_line(const char *line, int line_idx, int pass) {
         emit_string_literal(g_cur_section, p, 0);
         return;
     }
-    if (strcmp(token, ".byte") == 0) {
+    if (strcmp(token, ".byte") == 0 || strcmp(token, ".1byte") == 0) {
         for (i = 0; i < op_count; i++) {
             const char *ep = raw_ops[i];
             sec_emit_byte(g_cur_section, (uint8_t)eval_expr(&ep));
         }
         return;
     }
-    if (strcmp(token, ".short") == 0 || strcmp(token, ".word") == 0) {
+    if (strcmp(token, ".short") == 0 || strcmp(token, ".word") == 0 || strcmp(token, ".value") == 0 ||
+        strcmp(token, ".2byte") == 0 || strcmp(token, ".half") == 0 || strcmp(token, ".hword") == 0) {
         for (i = 0; i < op_count; i++) {
             const char *ep = raw_ops[i];
             sec_emit_word(g_cur_section, (uint16_t)eval_expr(&ep));
         }
         return;
     }
-    if (strcmp(token, ".long") == 0 || strcmp(token, ".quad") == 0) {
+    if (strcmp(token, ".long") == 0 || strcmp(token, ".quad") == 0 || strcmp(token, ".int") == 0 || strcmp(token, ".4byte") == 0) {
         for (i = 0; i < op_count; i++) {
             if (ops[i].has_sym) {
                 int s_idx = find_or_add_symbol(ops[i].sym_name);
@@ -1492,7 +1493,18 @@ static void assemble_line(const char *line, int line_idx, int pass) {
 
     /* IMUL: imull */
     if (strcmp(token, "imull") == 0) {
-        if (op_count == 2 && ops[1].kind == OP_REG) {
+        if (op_count == 2 && ops[0].kind == OP_IMM && ops[1].kind == OP_REG) {
+            if (ops[0].imm_val >= -128 && ops[0].imm_val <= 127 && !ops[0].has_sym) {
+                sec_emit_byte(g_cur_section, 0x6B);
+                emit_modrm_sib(g_cur_section, ops[1].reg_num, &ops[1], pass);
+                sec_emit_byte(g_cur_section, (uint8_t)ops[0].imm_val);
+            } else {
+                sec_emit_byte(g_cur_section, 0x69);
+                emit_modrm_sib(g_cur_section, ops[1].reg_num, &ops[1], pass);
+                sec_emit_dword(g_cur_section, (uint32_t)ops[0].imm_val);
+            }
+            return;
+        } else if (op_count == 2 && ops[1].kind == OP_REG) {
             sec_emit_byte(g_cur_section, 0x0F);
             sec_emit_byte(g_cur_section, 0xAF);
             emit_modrm_sib(g_cur_section, ops[1].reg_num, &ops[0], pass);
@@ -1522,7 +1534,34 @@ static void assemble_line(const char *line, int line_idx, int pass) {
         else { sec_emit_byte(g_cur_section, 0xFF); emit_modrm_sib(g_cur_section, 1, &ops[0], pass); }
         return;
     }
-    if (strcmp(token, "negl") == 0 && op_count == 1) {
+    if ((strcmp(token, "notl") == 0 || strcmp(token, "not") == 0) && op_count == 1) {
+        sec_emit_byte(g_cur_section, 0xF7);
+        emit_modrm_sib(g_cur_section, 2, &ops[0], pass);
+        return;
+    }
+    if (strcmp(token, "notb") == 0 && op_count == 1) {
+        sec_emit_byte(g_cur_section, 0xF6);
+        emit_modrm_sib(g_cur_section, 2, &ops[0], pass);
+        return;
+    }
+    if (strcmp(token, "notw") == 0 && op_count == 1) {
+        sec_emit_byte(g_cur_section, 0x66);
+        sec_emit_byte(g_cur_section, 0xF7);
+        emit_modrm_sib(g_cur_section, 2, &ops[0], pass);
+        return;
+    }
+    if ((strcmp(token, "negl") == 0 || strcmp(token, "neg") == 0) && op_count == 1) {
+        sec_emit_byte(g_cur_section, 0xF7);
+        emit_modrm_sib(g_cur_section, 3, &ops[0], pass);
+        return;
+    }
+    if (strcmp(token, "negb") == 0 && op_count == 1) {
+        sec_emit_byte(g_cur_section, 0xF6);
+        emit_modrm_sib(g_cur_section, 3, &ops[0], pass);
+        return;
+    }
+    if (strcmp(token, "negw") == 0 && op_count == 1) {
+        sec_emit_byte(g_cur_section, 0x66);
         sec_emit_byte(g_cur_section, 0xF7);
         emit_modrm_sib(g_cur_section, 3, &ops[0], pass);
         return;
