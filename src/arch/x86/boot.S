@@ -2,17 +2,33 @@
 # GEMIOS Preemptive Real-Time Operating System
 
 # Multiboot header and kernel entry point for 32-bit x86
-.set ALIGN,    1<<0             # align loaded modules on page boundaries
-.set MEMINFO,  1<<1             # provide memory map
-.set FLAGS,    ALIGN | MEMINFO  # this is the Multiboot 'flag' field
-.set MAGIC,    0x1BADB002       # 'magic number' lets bootloader find the header
-.set CHECKSUM, -(MAGIC + FLAGS) # checksum of above, to prove we are multiboot
+.set ALIGN,    1<<0            # align loaded modules on page boundaries
+.set MEMINFO,  1<<1            # provide memory map
+.set VIDEOINFO,1<<2            # provide video info
+.set FLAGS,    ALIGN | MEMINFO | VIDEOINFO # this is the Multiboot 'flag' field
+.set MAGIC,    0x1BADB002      # 'magic number' lets bootloader find the header
+.set CHECKSUM, -(MAGIC + FLAGS)# checksum of above, to prove we are multiboot
 
 .section .multiboot, "a"
 .align 4
+multiboot_header:
 .long MAGIC
 .long FLAGS
 .long CHECKSUM
+       /* header_addr */
+.long   multiboot_header
+        /* load_addr */
+.long   _start
+        /* load_end_addr */
+.long   _kernel_end
+        /* bss_end_addr */
+.long  stack_top 
+        /* entry_addr */
+.long   _start
+.long 0
+.long 640
+.long 480
+.long 32
 
 .section .bss
 .align 16
