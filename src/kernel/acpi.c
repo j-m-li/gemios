@@ -9,6 +9,8 @@
 #include "pit.h"
 #include "string.h"
 
+#include "multiboot.h"
+
 static bool g_acpi_supported = false;
 static bool g_acpi_initialized = false;
 static struct acpi_fadt *g_fadt = NULL;
@@ -26,12 +28,21 @@ static bool validate_checksum(const uint8_t *ptr, size_t length) {
     return (sum == 0);
 }
 
-static struct rsdp_descriptor *find_rsdp(void) {
+static struct rsdp_descriptor *find_rsdp(struct multiboot_info *mbi) {
     uintptr_t addr;
     uint16_t ebda_seg;
     uintptr_t ebda_addr;
 
-    /* 1. Search in EBDA (first 1KB) */
+    /* 1. Search in Multiboot config_table (e.g. from UEFI) */
+    if (mbi && (mbi->flags & MULTIBOOT_INFO_CONFIG_TABLE) && mbi->config_table != 0) {
+        if (memcmp((const void*)(uintptr_t)mbi->config_table, "RSD PTR ", 8) == 0) {
+            if (validate_checksum((const uint8_t*)(uintptr_t)mbi->config_table, 20)) {
+                return (struct rsdp_descriptor*)(uintptr_t)mbi->config_table;
+            }
+        }
+    }
+
+    /* 2. Search in EBDA (first 1KB) */
     ebda_seg = *((const uint16_t*)0x40E);
     ebda_addr = (uintptr_t)ebda_seg << 4;
     if (ebda_addr >= 0x80000 && ebda_addr < 0xA0000) {
@@ -44,7 +55,7 @@ static struct rsdp_descriptor *find_rsdp(void) {
         }
     }
 
-    /* 2. Search in BIOS ROM space (0x000E0000 to 0x000FFFFF) */
+    /* 3. Search in BIOS ROM space (0x000E0000 to 0x000FFFFF) */
     for (addr = 0x000E0000; addr < 0x00100000; addr += 16) {
         if (memcmp((const void*)addr, "RSD PTR ", 8) == 0) {
             if (validate_checksum((const uint8_t*)addr, 20)) {
@@ -56,29 +67,46 @@ static struct rsdp_descriptor *find_rsdp(void) {
     return NULL;
 }
 
-static struct acpi_fadt *find_fadt(struct acpi_sdt_header *rsdt) {
+static struct acpi_sdt_header *g_rsdt = NULL;
+static struct acpi_madt *g_madt = NULL;
+static uintptr_t g_lapic_addr = 0;
+
+struct acpi_sdt_header *acpi_find_table(const char *signature) {
     size_t entries;
     size_t i;
     const uint32_t *table_ptrs;
 
-    if (!rsdt || !validate_checksum((const uint8_t*)rsdt, rsdt->length)) {
+    if (!g_rsdt || !validate_checksum((const uint8_t*)g_rsdt, g_rsdt->length)) {
         return NULL;
     }
 
-    entries = (rsdt->length - sizeof(struct acpi_sdt_header)) / 4;
-    table_ptrs = (const uint32_t*)(const void*)((const uint8_t*)rsdt + sizeof(struct acpi_sdt_header));
+    entries = (g_rsdt->length - sizeof(struct acpi_sdt_header)) / 4;
+    table_ptrs = (const uint32_t*)(const void*)((const uint8_t*)g_rsdt + sizeof(struct acpi_sdt_header));
 
     for (i = 0; i < entries; i++) {
         struct acpi_sdt_header *header;
         header = (struct acpi_sdt_header*)(uintptr_t)table_ptrs[i];
-        if (header && memcmp(header->signature, "FACP", 4) == 0) {
+        if (header && memcmp(header->signature, signature, 4) == 0) {
             if (validate_checksum((const uint8_t*)header, header->length)) {
-                return (struct acpi_fadt*)header;
+                return header;
             }
         }
     }
 
     return NULL;
+}
+
+struct acpi_madt *acpi_get_madt(void) {
+    return g_madt;
+}
+
+uintptr_t acpi_get_lapic_address(void) {
+    return g_lapic_addr;
+}
+
+static struct acpi_fadt *find_fadt(struct acpi_sdt_header *rsdt) {
+    UNUSED(rsdt);
+    return (struct acpi_fadt*)acpi_find_table("FACP");
 }
 
 static uint16_t parse_aml_integer(const uint8_t **stream, const uint8_t *end) {
@@ -171,17 +199,20 @@ static bool parse_s5_package(const uint8_t *dsdt_bytes, size_t dsdt_len, uint16_
     return false;
 }
 
-bool acpi_init(void) {
+static struct multiboot_info *g_mbi_saved = NULL;
+
+bool acpi_init(struct multiboot_info *mbi) {
     struct rsdp_descriptor *rsdp;
     struct acpi_sdt_header *rsdt;
     struct acpi_sdt_header *dsdt_hdr;
 
     char oem_str[7];
 
+    if (mbi) g_mbi_saved = mbi;
     if (g_acpi_initialized) return g_acpi_supported;
     g_acpi_initialized = true;
 
-    rsdp = find_rsdp();
+    rsdp = find_rsdp(mbi ? mbi : g_mbi_saved);
     if (!rsdp) {
         kprintf("[ACPI] RSDP not found in memory.\n");
         return false;
@@ -192,45 +223,77 @@ bool acpi_init(void) {
     kprintf("[ACPI] Found RSDP at %p (OEM: %s, Rev %u)\n",
             (void*)rsdp, oem_str, (uint32_t)rsdp->revision);
 
-    rsdt = (struct acpi_sdt_header*)(uintptr_t)rsdp->rsdt_address;
-    if (!rsdt) {
+    g_rsdt = (struct acpi_sdt_header*)(uintptr_t)rsdp->rsdt_address;
+    if (!g_rsdt) {
         kprintf("[ACPI] RSDT table pointer is NULL.\n");
         return false;
     }
 
-    g_fadt = find_fadt(rsdt);
-    if (!g_fadt) {
-        kprintf("[ACPI] FADT table not found in RSDT.\n");
-        return false;
+    /* Parse MADT (Multiple APIC Description Table) */
+    g_madt = (struct acpi_madt*)acpi_find_table("APIC");
+    if (g_madt) {
+        const uint8_t *ptr;
+        const uint8_t *end;
+        uint32_t cpu_count = 0;
+        uint32_t ioapic_count = 0;
+
+        g_lapic_addr = (uintptr_t)g_madt->local_apic_address;
+
+        ptr = (const uint8_t*)g_madt + sizeof(struct acpi_madt);
+        end = (const uint8_t*)g_madt + g_madt->header.length;
+
+        while (ptr + sizeof(struct acpi_madt_entry_header) <= end) {
+            const struct acpi_madt_entry_header *entry = (const struct acpi_madt_entry_header*)ptr;
+            if (entry->length == 0) break;
+
+            if (entry->type == 0) { /* Local APIC */
+                const struct acpi_madt_local_apic *lapic = (const struct acpi_madt_local_apic*)ptr;
+                if (lapic->flags & 1) {
+                    cpu_count++;
+                }
+            } else if (entry->type == 1) { /* I/O APIC */
+                ioapic_count++;
+            } else if (entry->type == 5) { /* 64-bit Local APIC Address Override */
+                const struct acpi_madt_local_apic_override *ovr = (const struct acpi_madt_local_apic_override*)ptr;
+                g_lapic_addr = (uintptr_t)ovr->local_apic_address_low;
+            }
+
+            ptr += entry->length;
+        }
+
+        kprintf("[ACPI] Found MADT (APIC) Table: LAPIC Base: %p (%u CPU(s), %u I/O APIC(s))\n",
+                (void*)g_lapic_addr, cpu_count, ioapic_count);
+    } else {
+        kprintf("[ACPI] MADT (APIC) Table not found in RSDT.\n");
     }
 
-    kprintf("[ACPI] Found FADT at %p (PM1a_CNT=0x%x, PM1b_CNT=0x%x, SMI_CMD=0x%x)\n",
-            (void*)g_fadt, g_fadt->pm1a_cnt_blk, g_fadt->pm1b_cnt_blk, g_fadt->smi_cmd);
-
-    /* Parse DSDT for _S5 sleep type */
-    dsdt_hdr = (struct acpi_sdt_header*)(uintptr_t)g_fadt->dsdt;
-    if (dsdt_hdr && validate_checksum((const uint8_t*)dsdt_hdr, dsdt_hdr->length)) {
-        uint16_t typa;
-        uint16_t typb;
-
-        typa = 0;
-        typb = 0;
-        if (parse_s5_package((const uint8_t*)dsdt_hdr + sizeof(struct acpi_sdt_header),
-                             dsdt_hdr->length - sizeof(struct acpi_sdt_header),
-                             &typa, &typb)) {
-            g_slp_typa = typa;
-            g_slp_typb = typb;
-            kprintf("[ACPI] Extracted S5 package: SLP_TYPa=0x%x, SLP_TYPb=0x%x\n",
-                    g_slp_typa, g_slp_typb);
-        } else {
-            /* Default fallback for S5 (type 0 on QEMU/Bochs) */
-            g_slp_typa = 0x00;
-            g_slp_typb = 0x00;
-            kprintf("[ACPI] _S5 not found in DSDT, using default S5 sleep types.\n");
-        }
+    g_fadt = find_fadt(g_rsdt);
+    if (!g_fadt) {
+        kprintf("[ACPI] FADT table not found in RSDT.\n");
     } else {
-        g_slp_typa = 0x00;
-        g_slp_typb = 0x00;
+        kprintf("[ACPI] Found FADT at %p (PM1a_CNT=0x%x, PM1b_CNT=0x%x, SMI_CMD=0x%x)\n",
+                (void*)g_fadt, g_fadt->pm1a_cnt_blk, g_fadt->pm1b_cnt_blk, g_fadt->smi_cmd);
+
+        /* Parse DSDT for _S5 sleep type */
+        dsdt_hdr = (struct acpi_sdt_header*)(uintptr_t)g_fadt->dsdt;
+        if (dsdt_hdr && validate_checksum((const uint8_t*)dsdt_hdr, dsdt_hdr->length)) {
+            uint16_t typa;
+            uint16_t typb;
+
+            typa = 0;
+            typb = 0;
+            if (parse_s5_package((const uint8_t*)dsdt_hdr + sizeof(struct acpi_sdt_header),
+                                 dsdt_hdr->length - sizeof(struct acpi_sdt_header),
+                                 &typa, &typb)) {
+                g_slp_typa = typa;
+                g_slp_typb = typb;
+                kprintf("[ACPI] Extracted S5 package: SLP_TYPa=0x%x, SLP_TYPb=0x%x\n",
+                        g_slp_typa, g_slp_typb);
+            } else {
+                g_slp_typa = 0x00;
+                g_slp_typb = 0x00;
+            }
+        }
     }
 
     g_acpi_supported = true;
@@ -239,14 +302,14 @@ bool acpi_init(void) {
 
 bool acpi_is_supported(void) {
     if (!g_acpi_initialized) {
-        acpi_init();
+        acpi_init(NULL);
     }
     return g_acpi_supported;
 }
 
 void acpi_poweroff(void) {
     if (!g_acpi_initialized) {
-        acpi_init();
+        acpi_init(NULL);
     }
 
     if (g_acpi_supported && g_fadt != NULL) {

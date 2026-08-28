@@ -1026,6 +1026,9 @@ static void assemble_line(const char *line, int line_idx, int pass) {
     if (strcmp(token, "pushfl") == 0 || strcmp(token, "pushf") == 0) { sec_emit_byte(g_cur_section, 0x9C); return; }
     if (strcmp(token, "popfl") == 0 || strcmp(token, "popf") == 0) { sec_emit_byte(g_cur_section, 0x9D); return; }
     if (strcmp(token, "cltd") == 0 || strcmp(token, "cdq") == 0) { sec_emit_byte(g_cur_section, 0x99); return; }
+    if (strcmp(token, "cpuid") == 0) { sec_emit_byte(g_cur_section, 0x0F); sec_emit_byte(g_cur_section, 0xA2); return; }
+    if (strcmp(token, "rdmsr") == 0) { sec_emit_byte(g_cur_section, 0x0F); sec_emit_byte(g_cur_section, 0x32); return; }
+    if (strcmp(token, "wrmsr") == 0) { sec_emit_byte(g_cur_section, 0x0F); sec_emit_byte(g_cur_section, 0x30); return; }
 
     /* Single operand: push / pop */
     if ((strcmp(token, "pushl") == 0 || strcmp(token, "push") == 0) && op_count == 1) {

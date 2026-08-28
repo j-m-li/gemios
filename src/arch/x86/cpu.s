@@ -175,3 +175,36 @@ arch_shutdown:
 2:  hlt
     jmp 2b
 
+.global cpu_has_apic
+.type cpu_has_apic, @function
+cpu_has_apic:
+    pushl %ebx
+    movl $1, %eax
+    cpuid
+    shrl $9, %edx
+    andl $1, %edx
+    movl %edx, %eax
+    popl %ebx
+    ret
+
+.global cpu_get_msr
+.type cpu_get_msr, @function
+cpu_get_msr:
+    movl 4(%esp), %ecx
+    rdmsr
+    movl 8(%esp), %ecx
+    testl %ecx, %ecx
+    jz .Lget_msr_done
+    movl %edx, (%ecx)
+.Lget_msr_done:
+    ret
+
+.global cpu_set_msr
+.type cpu_set_msr, @function
+cpu_set_msr:
+    movl 4(%esp), %ecx
+    movl 8(%esp), %eax
+    movl 12(%esp), %edx
+    wrmsr
+    ret
+

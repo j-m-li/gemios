@@ -82,9 +82,60 @@ struct acpi_fadt {
     uint32_t flags;
 } PACKED;
 
+/* MADT Table (Multiple APIC Description Table) */
+struct acpi_madt {
+    struct acpi_sdt_header header;
+    uint32_t local_apic_address;
+    uint32_t flags;
+} PACKED;
+
+/* MADT Entry Header */
+struct acpi_madt_entry_header {
+    uint8_t type;
+    uint8_t length;
+} PACKED;
+
+/* Type 0: Processor Local APIC */
+struct acpi_madt_local_apic {
+    struct acpi_madt_entry_header header;
+    uint8_t acpi_processor_id;
+    uint8_t apic_id;
+    uint32_t flags;
+} PACKED;
+
+/* Type 1: I/O APIC */
+struct acpi_madt_io_apic {
+    struct acpi_madt_entry_header header;
+    uint8_t io_apic_id;
+    uint8_t reserved;
+    uint32_t io_apic_address;
+    uint32_t global_system_interrupt_base;
+} PACKED;
+
+/* Type 2: Interrupt Source Override */
+struct acpi_madt_interrupt_override {
+    struct acpi_madt_entry_header header;
+    uint8_t bus;
+    uint8_t source;
+    uint32_t global_system_interrupt;
+    uint16_t flags;
+} PACKED;
+
+/* Type 5: Local APIC Address Override */
+struct acpi_madt_local_apic_override {
+    struct acpi_madt_entry_header header;
+    uint16_t reserved;
+    uint32_t local_apic_address_low;
+    uint32_t local_apic_address_high;
+} PACKED;
+
 /* ACPI Public API */
-bool acpi_init(void);
+struct multiboot_info;
+bool acpi_init(struct multiboot_info *mbi);
 void acpi_poweroff(void);
 bool acpi_is_supported(void);
+struct acpi_sdt_header *acpi_find_table(const char *signature);
+struct acpi_madt *acpi_get_madt(void);
+uintptr_t acpi_get_lapic_address(void);
 
 #endif /* GEMIOS_ACPI_H */

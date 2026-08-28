@@ -6,6 +6,7 @@
 #include "idt.h"
 #include "gdt.h"
 #include "pic.h"
+#include "apic.h"
 #include "string.h"
 #include "io.h"
 #include "sched.h"
@@ -106,8 +107,12 @@ uint32_t isr_handler(registers_t *regs) {
             for (;;) { hlt(); }
         }
     } else if (regs->int_no == 32) {
-        /* PIT Timer IRQ0 - Preemptive Scheduler Tick */
-        pic_send_eoi(0);
+        /* Timer Tick (APIC / PIT) - Preemptive Scheduler Tick */
+        if (apic_is_active()) {
+            apic_send_eoi();
+        } else {
+            pic_send_eoi(0);
+        }
         if (interrupt_handlers[32]) {
             interrupt_handlers[32](regs);
         }

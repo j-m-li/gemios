@@ -25,6 +25,7 @@
 #include "blockdev.h"
 #include "fat.h"
 #include "acpi.h"
+#include "apic.h"
 #include "multiboot.h"
 #include "shell.h"
 #include "io.h"
@@ -96,10 +97,17 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     kprintf("[Kernel] Initializing IDT...\n");
     idt_init();
 
-    kprintf("[Kernel] Initializing PIT 8254 Timer (1000 Hz)...\n");
-    pit_init(1000);
+    /* 3. Detect ACPI and Initialize System Timer (APIC if present, else PIT) */
+    acpi_init(mbi);
 
-    /* 3. Initialize PS/2 Keyboard Controller */
+    if (apic_init()) {
+        kprintf("[Timer] Using Local APIC Timer (1000 Hz) instead of legacy PIT.\n");
+    } else {
+        kprintf("[Timer] APIC not present, using PIT 8254 Timer (1000 Hz)...\n");
+        pit_init(1000);
+    }
+
+    /* 4. Initialize PS/2 Keyboard Controller */
     ps2_kbd_init();
 
     /* 4. Initialize Memory Managers */
@@ -146,10 +154,7 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
         kprint_color(0x4F, "[Kernel] No USB xHCI Controller found on PCI bus!\n");
     }
 
-    /* 7. Initialize ACPI Subsystem */
-    acpi_init();
-
-    /* 8. Initialize RTOS Preemptive Scheduler and Tasks */
+    /* 7. Initialize RTOS Preemptive Scheduler and Tasks */
     kprintf("[Kernel] Initializing RTOS Preemptive Scheduler...\n");
     rtos_sched_init();
 

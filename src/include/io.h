@@ -28,6 +28,9 @@ void arch_trigger_yield(void);
 void rtos_start_first_task(uint32_t *stack_ptr);
 void arch_reboot(void);
 void arch_shutdown(void);
+bool cpu_has_apic(void);
+uint32_t cpu_get_msr(uint32_t msr, uint32_t *hi);
+void cpu_set_msr(uint32_t msr, uint32_t lo, uint32_t hi);
 
 /* High-level IRQ state helpers */
 uint32_t irq_save(void);
