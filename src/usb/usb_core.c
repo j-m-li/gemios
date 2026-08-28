@@ -426,7 +426,7 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
     /* 10. Attach Drivers */
     if (is_hub) {
-        snprintf(dev->name, sizeof(dev->name), "USB Hub");
+        snprintf(dev->name, sizeof(dev->name), "%s Hub", (speed >= USB_SPEED_SUPER) ? "USB 3.0 SuperSpeed" : "USB 2.0");
         usb_hub_init_device(dev);
     } else {
         for (if_idx = 0; if_idx < dev->num_interfaces; if_idx++) {

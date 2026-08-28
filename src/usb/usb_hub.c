@@ -1,24 +1,23 @@
-/*
- * This is free and unencumbered software released into the public domain.
- * GEMIOS Preemptive Real-Time Operating System
- */
-
 #include "usb_hub.h"
 #include "xhci.h"
 #include "time.h"
 #include "heap.h"
 #include "string.h"
+#include "pit.h"
+#include "vga.h"
 
 #define MAX_HUBS 4
 static usb_hub_t hubs[MAX_HUBS];
 static size_t hub_count = 0;
 
-static int hub_get_descriptor(usb_device_t *dev, usb_hub_descriptor_t *desc) {
+static int hub_get_descriptor(usb_device_t *dev, void *desc, uint16_t len) {
+    uint8_t desc_type;
+    desc_type = (dev->speed >= USB_SPEED_SUPER) ? USB_DESC_SS_HUB : USB_DESC_HUB;
     return usb_control_msg(dev,
                            USB_REQ_TYPE_CLASS | USB_DIR_IN | USB_REQ_RECIPIENT_DEVICE,
                            USB_REQ_GET_DESCRIPTOR,
-                           (USB_DESC_HUB << 8) | 0,
-                           0, desc, sizeof(usb_hub_descriptor_t));
+                           (desc_type << 8) | 0,
+                           0, desc, len);
 }
 
 static int hub_set_port_feature(usb_device_t *dev, uint8_t port, uint16_t feature) {
@@ -44,42 +43,80 @@ static int hub_get_port_status(usb_device_t *dev, uint8_t port, uint32_t *status
 
 int usb_hub_init_device(usb_device_t *dev) {
     usb_hub_t *hub;
-    usb_hub_descriptor_t hub_desc;
     int res;
     uint8_t port;
     xhci_controller_t *ctrl;
+    uint8_t hub_desc_raw[32];
+    xhci_input_ctx_t *input_ctx;
 
     if (hub_count >= MAX_HUBS) return -1;
 
     hub = &hubs[hub_count++];
     memset(hub, 0, sizeof(usb_hub_t));
     hub->dev = dev;
+    hub->is_superspeed = (dev->speed >= USB_SPEED_SUPER);
 
-    memset(&hub_desc, 0, sizeof(hub_desc));
+    memset(hub_desc_raw, 0, sizeof(hub_desc_raw));
 
-    res = hub_get_descriptor(dev, &hub_desc);
-    if (res != 0) {
-        kprint_color(0x4F, "[HUB] Failed to get Hub Descriptor on Slot %u (err %d)\n", dev->slot_id, res);
-        return res;
+    if (hub->is_superspeed) {
+        usb_ss_hub_descriptor_t *ss_desc = (usb_ss_hub_descriptor_t*)hub_desc_raw;
+        res = hub_get_descriptor(dev, ss_desc, sizeof(usb_ss_hub_descriptor_t));
+        if (res != 0) {
+            /* Fallback to standard hub descriptor if needed */
+            res = hub_get_descriptor(dev, ss_desc, sizeof(usb_hub_descriptor_t));
+        }
+        if (res != 0) {
+            kprint_color(0x4F, "[HUB] Failed to get SuperSpeed Hub Descriptor on Slot %u (err %d)\n", dev->slot_id, res);
+            return res;
+        }
+        hub->num_ports = ss_desc->bNbrPorts;
+        hub->characteristics = ss_desc->wHubCharacteristics;
+        hub->pwr_on_delay_ms = ss_desc->bPwrOn2PwrGood * 2;
+        hub->hub_hdr_dec_lat = ss_desc->bHubHdrDecLat;
+    } else {
+        usb_hub_descriptor_t *usb2_desc = (usb_hub_descriptor_t*)hub_desc_raw;
+        res = hub_get_descriptor(dev, usb2_desc, sizeof(usb_hub_descriptor_t));
+        if (res != 0) {
+            kprint_color(0x4F, "[HUB] Failed to get USB 2.0 Hub Descriptor on Slot %u (err %d)\n", dev->slot_id, res);
+            return res;
+        }
+        hub->num_ports = usb2_desc->bNbrPorts;
+        hub->characteristics = usb2_desc->wHubCharacteristics;
+        hub->pwr_on_delay_ms = usb2_desc->bPwrOn2PwrGood * 2;
+        hub->hub_hdr_dec_lat = 0;
     }
 
-    hub->num_ports = hub_desc.bNbrPorts;
-    hub->characteristics = hub_desc.wHubCharacteristics;
-    hub->pwr_on_delay_ms = hub_desc.bPwrOn2PwrGood * 2;
     if (hub->pwr_on_delay_ms == 0) hub->pwr_on_delay_ms = 100;
 
-    kprintf("[HUB] Initialized USB Hub on Slot %u: %u downstream ports, PowerDelay=%ums\n",
-            dev->slot_id, hub->num_ports, hub->pwr_on_delay_ms);
+    kprintf("[HUB] Initialized USB Hub on Slot %u (%s): %u downstream ports, PowerDelay=%ums\n",
+            dev->slot_id,
+            hub->is_superspeed ? "USB 3.0 SuperSpeed" : "USB 2.0",
+            hub->num_ports, hub->pwr_on_delay_ms);
+
+    ctrl = xhci_get_controller();
+
+    /* Update Slot Context in xHCI with NumberOfPorts and Hub latency via Evaluate Context */
+    input_ctx = (xhci_input_ctx_t*)kmalloc_aligned(sizeof(xhci_input_ctx_t), 64);
+    if (input_ctx) {
+        memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
+        input_ctx->ctrl.add_flags = (1 << 0); /* Slot Context */
+        input_ctx->slot.info1 = (dev->route_string & 0xFFFFF) | ((dev->speed & 0x0F) << 20) | (1 << 26);
+        input_ctx->slot.info2 = (dev->root_port << 16) | ((uint32_t)hub->num_ports << 24);
+        if (hub->is_superspeed) {
+            input_ctx->slot.info4 = (hub->hub_hdr_dec_lat & 0xFF);
+        }
+        xhci_cmd_evaluate_ctx(ctrl, dev->slot_id, input_ctx);
+        kfree(input_ctx);
+    }
 
     /* Power on all downstream ports */
     for (port = 1; port <= hub->num_ports; port++) {
-        hub_set_port_feature(dev, port, USB_HUB_FEAT_PORT_POWER);
+        uint16_t feat = hub->is_superspeed ? USB_SS_HUB_FEAT_PORT_POWER : USB_HUB_FEAT_PORT_POWER;
+        hub_set_port_feature(dev, port, feat);
     }
 
     /* Wait for power stabilization */
     rtos_sleep_ms(hub->pwr_on_delay_ms + 50);
-
-    ctrl = xhci_get_controller();
 
     /* Check downstream ports */
     for (port = 1; port <= hub->num_ports; port++) {
@@ -91,7 +128,7 @@ int usb_hub_init_device(usb_device_t *dev) {
         if (res != 0) continue;
 
         stat = (uint16_t)(port_status & 0xFFFF);
-        if (stat & USB_HUB_PORT_STAT_CONNECTION) {
+        if (stat & (hub->is_superspeed ? USB_SS_HUB_PORT_STAT_CONNECTION : USB_HUB_PORT_STAT_CONNECTION)) {
             uint8_t speed;
             uint32_t route_string;
             uint32_t shift;
@@ -100,29 +137,56 @@ int usb_hub_init_device(usb_device_t *dev) {
             kprintf("[HUB] Slot %u Port %u: Connected device detected. Resetting port...\n", dev->slot_id, port);
 
             /* Issue Port Reset */
-            hub_set_port_feature(dev, port, USB_HUB_FEAT_PORT_RESET);
-            rtos_sleep_ms(60);
+            if (hub->is_superspeed) {
+                int wait_i;
+                hub_set_port_feature(dev, port, USB_SS_HUB_FEAT_PORT_RESET);
+                for (wait_i = 0; wait_i < 20; wait_i++) {
+                    rtos_sleep_ms(10);
+                    hub_get_port_status(dev, port, &port_status);
+                    stat = (uint16_t)(port_status & 0xFFFF);
+                    if ((stat & USB_SS_HUB_PORT_STAT_RESET) == 0 && (stat & USB_SS_HUB_PORT_STAT_ENABLE)) {
+                        break;
+                    }
+                }
+                /* If hot reset did not enable port, try warm reset (BH_PORT_RESET) */
+                if (!(stat & USB_SS_HUB_PORT_STAT_ENABLE)) {
+                    hub_set_port_feature(dev, port, USB_SS_HUB_FEAT_BH_PORT_RESET);
+                    for (wait_i = 0; wait_i < 20; wait_i++) {
+                        rtos_sleep_ms(10);
+                        hub_get_port_status(dev, port, &port_status);
+                        stat = (uint16_t)(port_status & 0xFFFF);
+                        if ((stat & USB_SS_HUB_PORT_STAT_RESET) == 0 && (stat & USB_SS_HUB_PORT_STAT_ENABLE)) {
+                            break;
+                        }
+                    }
+                }
+                speed = USB_SPEED_SUPER;
+                hub_clear_port_feature(dev, port, USB_SS_HUB_FEAT_C_PORT_RESET);
+                hub_clear_port_feature(dev, port, USB_SS_HUB_FEAT_C_BH_PORT_RESET);
+                hub_clear_port_feature(dev, port, USB_SS_HUB_FEAT_C_PORT_CONNECTION);
+                hub_clear_port_feature(dev, port, USB_SS_HUB_FEAT_C_PORT_LINK_STATE);
+            } else {
+                hub_set_port_feature(dev, port, USB_HUB_FEAT_PORT_RESET);
+                rtos_sleep_ms(60);
 
-            /* Read status again */
-            res = hub_get_port_status(dev, port, &port_status);
-            stat = (uint16_t)(port_status & 0xFFFF);
+                hub_get_port_status(dev, port, &port_status);
+                stat = (uint16_t)(port_status & 0xFFFF);
 
-            speed = USB_SPEED_FULL;
-            if (stat & USB_HUB_PORT_STAT_LOW_SPEED) {
-                speed = USB_SPEED_LOW;
-            } else if (stat & USB_HUB_PORT_STAT_HIGH_SPEED) {
-                speed = USB_SPEED_HIGH;
+                speed = USB_SPEED_FULL;
+                if (stat & USB_HUB_PORT_STAT_LOW_SPEED) {
+                    speed = USB_SPEED_LOW;
+                } else if (stat & USB_HUB_PORT_STAT_HIGH_SPEED) {
+                    speed = USB_SPEED_HIGH;
+                }
+
+                hub_clear_port_feature(dev, port, USB_HUB_FEAT_C_PORT_RESET);
+                hub_clear_port_feature(dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
             }
 
             kprintf("[HUB] Slot %u Port %u: Reset complete. Downstream Speed = %s (%u)\n",
                     dev->slot_id, port, usb_speed_to_string(speed), speed);
 
-            /* Clear port change feature */
-            hub_clear_port_feature(dev, port, USB_HUB_FEAT_C_PORT_RESET);
-            hub_clear_port_feature(dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
-
             /* Calculate route string for downstream device */
-            /* xHCI Route String is 20 bits: 4 bits per hub level (up to 5 levels) */
             route_string = dev->route_string;
             shift = 0;
             while (shift < 20 && ((route_string >> shift) & 0x0F) != 0) {
@@ -135,9 +199,15 @@ int usb_hub_init_device(usb_device_t *dev) {
             /* Enable slot for child device */
             child_slot = 0;
             if (xhci_cmd_enable_slot(ctrl, &child_slot) == 0 && child_slot > 0) {
+                int enum_res;
                 kprintf("[HUB] Allocated Slot ID %u for device on Hub Slot %u Port %u (Route=0x%x)\n",
                         child_slot, dev->slot_id, port, route_string);
-                usb_enumerate_device(ctrl, child_slot, speed, dev->root_port, dev->slot_id, port, route_string);
+                enum_res = usb_enumerate_device(ctrl, child_slot, speed, dev->root_port, dev->slot_id, port, route_string);
+                if (enum_res != 0) {
+                    kprint_color(0x4F, "[HUB] Enumeration failed on Hub Slot %u Port %u (err %d), disabling slot\n",
+                                 dev->slot_id, port, enum_res);
+                    xhci_cmd_disable_slot(ctrl, child_slot);
+                }
             } else {
                 kprint_color(0x4F, "[HUB] Failed to allocate slot for device on Hub Slot %u Port %u\n",
                              dev->slot_id, port);
@@ -173,29 +243,65 @@ void usb_hub_poll(void) {
             stat = (uint16_t)(port_status & 0xFFFF);
             change = (uint16_t)((port_status >> 16) & 0xFFFF);
 
-            if (change & (USB_HUB_PORT_STAT_CONNECTION | (1 << 4))) {
-                hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
-                hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_RESET);
+            if (change & (hub->is_superspeed ? (USB_SS_HUB_PORT_STAT_CONNECTION | (1 << 4) | (1 << 5) | (1 << 6)) : (USB_HUB_PORT_STAT_CONNECTION | (1 << 4)))) {
+                if (hub->is_superspeed) {
+                    hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_PORT_CONNECTION);
+                    hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_PORT_RESET);
+                    hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_BH_PORT_RESET);
+                    hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_PORT_LINK_STATE);
+                } else {
+                    hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
+                    hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_RESET);
+                }
 
-                if (stat & USB_HUB_PORT_STAT_CONNECTION) {
+                if (stat & (hub->is_superspeed ? USB_SS_HUB_PORT_STAT_CONNECTION : USB_HUB_PORT_STAT_CONNECTION)) {
                     uint8_t speed;
                     uint32_t route_string;
                     uint32_t shift;
                     uint8_t child_slot;
 
                     kprintf("[HUB] Hub Slot %u Port %u: Device attached, resetting...\n", hub->dev->slot_id, port);
-                    hub_set_port_feature(hub->dev, port, USB_HUB_FEAT_PORT_RESET);
-                    rtos_sleep_ms(60);
+                    if (hub->is_superspeed) {
+                        int wait_i;
+                        hub_set_port_feature(hub->dev, port, USB_SS_HUB_FEAT_PORT_RESET);
+                        for (wait_i = 0; wait_i < 20; wait_i++) {
+                            rtos_sleep_ms(10);
+                            hub_get_port_status(hub->dev, port, &port_status);
+                            stat = (uint16_t)(port_status & 0xFFFF);
+                            if ((stat & USB_SS_HUB_PORT_STAT_RESET) == 0 && (stat & USB_SS_HUB_PORT_STAT_ENABLE)) {
+                                break;
+                            }
+                        }
+                        if (!(stat & USB_SS_HUB_PORT_STAT_ENABLE)) {
+                            hub_set_port_feature(hub->dev, port, USB_SS_HUB_FEAT_BH_PORT_RESET);
+                            for (wait_i = 0; wait_i < 20; wait_i++) {
+                                rtos_sleep_ms(10);
+                                hub_get_port_status(hub->dev, port, &port_status);
+                                stat = (uint16_t)(port_status & 0xFFFF);
+                                if ((stat & USB_SS_HUB_PORT_STAT_RESET) == 0 && (stat & USB_SS_HUB_PORT_STAT_ENABLE)) {
+                                    break;
+                                }
+                            }
+                        }
+                        speed = USB_SPEED_SUPER;
+                        hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_PORT_RESET);
+                        hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_BH_PORT_RESET);
+                        hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_PORT_CONNECTION);
+                        hub_clear_port_feature(hub->dev, port, USB_SS_HUB_FEAT_C_PORT_LINK_STATE);
+                    } else {
+                        hub_set_port_feature(hub->dev, port, USB_HUB_FEAT_PORT_RESET);
+                        rtos_sleep_ms(60);
 
-                    hub_get_port_status(hub->dev, port, &port_status);
-                    stat = (uint16_t)(port_status & 0xFFFF);
+                        hub_get_port_status(hub->dev, port, &port_status);
+                        stat = (uint16_t)(port_status & 0xFFFF);
 
-                    speed = USB_SPEED_FULL;
-                    if (stat & USB_HUB_PORT_STAT_LOW_SPEED) speed = USB_SPEED_LOW;
-                    else if (stat & USB_HUB_PORT_STAT_HIGH_SPEED) speed = USB_SPEED_HIGH;
+                        speed = USB_SPEED_FULL;
+                        if (stat & USB_HUB_PORT_STAT_LOW_SPEED) speed = USB_SPEED_LOW;
+                        else if (stat & USB_HUB_PORT_STAT_HIGH_SPEED) speed = USB_SPEED_HIGH;
 
-                    hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_RESET);
-                    hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
+                        hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_RESET);
+                        hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
+                    }
 
                     route_string = hub->dev->route_string;
                     shift = 0;
@@ -208,7 +314,13 @@ void usb_hub_poll(void) {
 
                     child_slot = 0;
                     if (xhci_cmd_enable_slot(ctrl, &child_slot) == 0 && child_slot > 0) {
-                        usb_enumerate_device(ctrl, child_slot, speed, hub->dev->root_port, hub->dev->slot_id, port, route_string);
+                        int enum_res;
+                        enum_res = usb_enumerate_device(ctrl, child_slot, speed, hub->dev->root_port, hub->dev->slot_id, port, route_string);
+                        if (enum_res != 0) {
+                            kprint_color(0x4F, "[HUB] Enumeration failed on Hub Slot %u Port %u (err %d), disabling slot\n",
+                                         hub->dev->slot_id, port, enum_res);
+                            xhci_cmd_disable_slot(ctrl, child_slot);
+                        }
                     }
                 }
             }

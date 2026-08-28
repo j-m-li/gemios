@@ -140,6 +140,24 @@
 #define USB_HUB_PORT_STAT_LOW_SPEED   (1 << 9)
 #define USB_HUB_PORT_STAT_HIGH_SPEED  (1 << 10)
 
+/* USB 3.0 SuperSpeed Hub Features */
+#define USB_SS_HUB_FEAT_PORT_RESET        4
+#define USB_SS_HUB_FEAT_PORT_POWER        8
+#define USB_SS_HUB_FEAT_BH_PORT_RESET     28
+#define USB_SS_HUB_FEAT_C_PORT_CONNECTION 16
+#define USB_SS_HUB_FEAT_C_PORT_RESET      20
+#define USB_SS_HUB_FEAT_C_BH_PORT_RESET   29
+#define USB_SS_HUB_FEAT_C_PORT_LINK_STATE 25
+#define USB_SS_HUB_FEAT_C_PORT_CONFIG_ERR 26
+
+/* USB 3.0 SuperSpeed Hub Port Status */
+#define USB_SS_HUB_PORT_STAT_CONNECTION   (1 << 0)
+#define USB_SS_HUB_PORT_STAT_ENABLE       (1 << 1)
+#define USB_SS_HUB_PORT_STAT_RESET        (1 << 4)
+#define USB_SS_HUB_PORT_STAT_POWER        (1 << 9)
+#define USB_SS_HUB_PORT_LINK_STATE(s)     (((s) >> 5) & 0x0F)
+#define USB_SS_HUB_PORT_SPEED(s)          (((s) >> 10) & 0x07)
+
 /* USB Setup Packet Structure (8 bytes) */
 struct usb_setup_packet {
     uint8_t  bmRequestType;
@@ -230,6 +248,20 @@ struct usb_hub_descriptor {
     uint8_t  device_removable[8];
 } PACKED;
 typedef struct usb_hub_descriptor usb_hub_descriptor_t;
+
+/* USB 3.0 SuperSpeed Hub Descriptor (12 bytes) */
+struct usb_ss_hub_descriptor {
+    uint8_t  bDescLength;
+    uint8_t  bDescriptorType;       /* 0x2A */
+    uint8_t  bNbrPorts;             /* Number of downstream facing ports */
+    uint16_t wHubCharacteristics;
+    uint8_t  bPwrOn2PwrGood;        /* Time from port power on to power good in 2ms */
+    uint8_t  bHubContrCurrent;      /* Max current in mA */
+    uint8_t  bHubHdrDecLat;         /* Hub Packet Header Decode Latency */
+    uint16_t wHubDelay;             /* Average Hub delay in ns */
+    uint16_t DeviceRemovable;       /* Bitmap of removable devices */
+} PACKED;
+typedef struct usb_ss_hub_descriptor usb_ss_hub_descriptor_t;
 
 const char *usb_speed_to_string(uint8_t speed);
 const char *usb_class_to_string(uint8_t class_code);

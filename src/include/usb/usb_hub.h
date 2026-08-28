@@ -15,6 +15,8 @@ typedef struct usb_hub {
     uint8_t num_ports;
     uint16_t characteristics;
     uint8_t pwr_on_delay_ms;
+    bool is_superspeed;
+    uint8_t hub_hdr_dec_lat;
     uint8_t port_status[MAX_HUB_PORTS];
     bool port_connected[MAX_HUB_PORTS];
 } usb_hub_t;
