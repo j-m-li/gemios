@@ -139,7 +139,43 @@ static void pci_probe_device(uint8_t bus, uint8_t slot, uint8_t func) {
             }
 
             if (mem_type == 0x02) {
-                /* 64-bit BAR: skip next BAR slot */
+                /* 64-bit BAR */
+                uint32_t bar_high = 0;
+                if (bar_idx + 1 < max_bars) {
+                    bar_high = pci_read_config32(bus, slot, func, (uint8_t)(bar_offset + 4));
+                }
+
+                if (bar_high != 0) {
+                    /* BAR is mapped above 4GB! Remap it below 4GB */
+                    static uint32_t s_gemios_next_mmio = 0xD8000000;
+                    uint32_t bar_len = dev->bar_size[bar_idx];
+                    uint32_t new_base;
+
+                    if (bar_len == 0 || bar_len > 0x10000000) {
+                        bar_len = 0x00010000; /* 64 KB fallback */
+                    }
+
+                    s_gemios_next_mmio = (s_gemios_next_mmio - bar_len) & ~(bar_len - 1);
+                    new_base = s_gemios_next_mmio;
+
+                    /* Disable memory decoding */
+                    pci_write_config16(bus, slot, func, 0x04, old_cmd & ~PCI_COMMAND_MEMORY_SPACE);
+
+                    /* Reprogram BAR low & high */
+                    pci_write_config32(bus, slot, func, bar_offset, new_base | (bar_val & 0x0F));
+                    if (bar_idx + 1 < max_bars) {
+                        pci_write_config32(bus, slot, func, (uint8_t)(bar_offset + 4), 0);
+                    }
+
+                    /* Restore / enable memory decoding */
+                    pci_write_config16(bus, slot, func, 0x04, old_cmd | PCI_COMMAND_MEMORY_SPACE | PCI_COMMAND_BUS_MASTER);
+
+                    dev->bar[bar_idx] = new_base;
+                    kprintf("[PCI] Remapped >4GB 64-bit BAR on %02x:%02x.%u to 0x%08x (len=%u KB)\n",
+                            bus, slot, func, new_base, bar_len / 1024);
+                }
+
+                /* skip next BAR slot for 64-bit BAR */
                 bar_idx++;
             }
         }

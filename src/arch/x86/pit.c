@@ -15,9 +15,13 @@
 static volatile uint32_t pit_ticks = 0;
 static uint32_t current_freq = 1000;
 
+void pit_tick(void) {
+    pit_ticks++;
+}
+
 static void pit_irq_handler(registers_t *regs) {
     UNUSED(regs);
-    pit_ticks++;
+    /* Handled centrally in isr_handler */
 }
 
 void pit_init(uint32_t frequency) {
@@ -49,13 +53,29 @@ uint32_t pit_get_uptime_ms(void) {
     return (pit_ticks * 1000) / current_freq;
 }
 
+/* Hardware-timed delay using PIT Channel 2 counter */
 void pit_delay_ms(uint32_t ms) {
     uint32_t i;
-    volatile uint32_t d;
+    uint8_t status;
+
     for (i = 0; i < ms; i++) {
-        for (d = 0; d < 500; d++) {
+        /* Enable Channel 2 gate (bit 0 = 1), speaker off (bit 1 = 0) */
+        status = inb(0x61);
+        outb(0x61, (status & 0xFD) | 0x01);
+
+        /* Channel 2, Mode 0 (Interrupt on terminal count), binary 16-bit */
+        outb(PIT_COMMAND, 0xB0);
+        outb(0x42, (uint8_t)(1193 & 0xFF));
+        outb(0x42, (uint8_t)((1193 >> 8) & 0xFF));
+
+        /* Wait for Channel 2 output (bit 5 of port 0x61) to go high */
+        while ((inb(0x61) & 0x20) == 0) {
             io_wait();
         }
+
+        /* Restore port 0x61 */
+        outb(0x61, status & 0xFC);
     }
 }
+
 

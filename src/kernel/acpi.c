@@ -4,6 +4,7 @@
  */
 
 #include "acpi.h"
+#include "pci.h"
 #include "io.h"
 #include "vga.h"
 #include "pit.h"
@@ -351,4 +352,74 @@ void acpi_poweroff(void) {
 
     /* Fallback to standard hardware shutdown ports & CPU halt */
     arch_shutdown();
+}
+
+void acpi_reboot(void) {
+    if (!g_acpi_initialized) {
+        acpi_init(NULL);
+    }
+
+    kprintf("[ACPI] Initiating System Reboot...\n");
+
+    /* 1. ACPI FADT Reset Register (ACPI 2.0+ standard) */
+    if (g_acpi_supported && g_fadt != NULL) {
+        if (g_fadt->header.length >= 129 && (g_fadt->flags & (1 << 10))) {
+            struct acpi_gas *reset = &g_fadt->reset_reg;
+            uint8_t val = g_fadt->reset_value;
+
+            kprintf("[ACPI] Using FADT Reset Register (Space=%u, Addr=0x%x, Val=0x%02x)\n",
+                    reset->address_space_id, reset->address_lo, val);
+
+            if (reset->address_space_id == 1) {
+                /* System I/O Port */
+                uint16_t port = (uint16_t)reset->address_lo;
+                if (reset->register_bit_width == 16 || reset->access_size == 2) {
+                    outw(port, (uint16_t)val);
+                } else if (reset->register_bit_width == 32 || reset->access_size == 3) {
+                    outl(port, (uint32_t)val);
+                } else {
+                    outb(port, val);
+                }
+                pit_delay_ms(50);
+            } else if (reset->address_space_id == 0) {
+                /* System Memory / MMIO */
+                mmio_write8((uintptr_t)reset->address_lo, val);
+                pit_delay_ms(50);
+            } else if (reset->address_space_id == 2) {
+                /* PCI Config Space:
+                 * bits 0..15: Register offset
+                 * bits 16..31: Function
+                 * bits 32..47: Device (in address_hi)
+                 * bits 48..63: Bus (in address_hi)
+                 */
+                uint8_t reg = (uint8_t)(reset->address_lo & 0xFF);
+                uint8_t func = (uint8_t)((reset->address_lo >> 16) & 0x07);
+                uint8_t dev = (uint8_t)(reset->address_hi & 0x1F);
+                uint8_t bus = (uint8_t)((reset->address_hi >> 16) & 0xFF);
+                pci_write_config8(bus, dev, func, reg, val);
+                pit_delay_ms(50);
+            }
+        }
+    }
+
+    /* 2. PCI Chipset Reset Port 0xCF9 (Standard for Intel / AMD / VirtualBox / QEMU / Bare Metal) */
+    outb(0xCF9, 0x02);
+    pit_delay_ms(2);
+    outb(0xCF9, 0x06); /* Hard reset */
+    pit_delay_ms(10);
+    outb(0xCF9, 0x0E); /* Full power cycle reset */
+    pit_delay_ms(50);
+
+    /* 3. 8042 Keyboard Controller Pulse Reset */
+    {
+        int timeout = 10000;
+        while ((inb(0x64) & 0x02) && timeout-- > 0) {
+            io_wait();
+        }
+        outb(0x64, 0xFE);
+        pit_delay_ms(50);
+    }
+
+    /* 4. Fallback: CPU Triple Fault */
+    arch_reboot();
 }

@@ -97,14 +97,16 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     kprintf("[Kernel] Initializing IDT...\n");
     idt_init();
 
-    /* 3. Detect ACPI and Initialize System Timer (APIC if present, else PIT) */
+    /* 3. Detect ACPI and Initialize System Timer */
     acpi_init(mbi);
+
+    /* Initialize PIT 8254 timer (1000 Hz) */
+    pit_init(1000);
 
     if (apic_init()) {
         kprintf("[Timer] Using Local APIC Timer (1000 Hz) instead of legacy PIT.\n");
     } else {
         kprintf("[Timer] APIC not present, using PIT 8254 Timer (1000 Hz)...\n");
-        pit_init(1000);
     }
 
     /* 4. Initialize PS/2 Keyboard Controller */

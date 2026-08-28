@@ -39,6 +39,16 @@ struct acpi_sdt_header {
     uint32_t creator_revision;
 } PACKED;
 
+/* ACPI Generic Address Structure (GAS) */
+struct acpi_gas {
+    uint8_t address_space_id; /* 0=System Memory, 1=System I/O, 2=PCI Config */
+    uint8_t register_bit_width;
+    uint8_t register_bit_offset;
+    uint8_t access_size;      /* 1=Byte, 2=Word, 3=Dword, 4=Qword */
+    uint32_t address_lo;
+    uint32_t address_hi;
+} PACKED;
+
 /* FADT Table (Fixed ACPI Description Table) */
 struct acpi_fadt {
     struct acpi_sdt_header header;
@@ -80,6 +90,22 @@ struct acpi_fadt {
     uint16_t iapc_boot_arch;
     uint8_t reserved2;
     uint32_t flags;
+    struct acpi_gas reset_reg;
+    uint8_t reset_value;
+    uint8_t arm_boot_arch;
+    uint8_t fadt_minor_version;
+    uint32_t x_firmware_ctrl_lo;
+    uint32_t x_firmware_ctrl_hi;
+    uint32_t x_dsdt_lo;
+    uint32_t x_dsdt_hi;
+    struct acpi_gas x_pm1a_evt_blk;
+    struct acpi_gas x_pm1b_evt_blk;
+    struct acpi_gas x_pm1a_cnt_blk;
+    struct acpi_gas x_pm1b_cnt_blk;
+    struct acpi_gas x_pm2_cnt_blk;
+    struct acpi_gas x_pm_tmr_blk;
+    struct acpi_gas x_gpe0_blk;
+    struct acpi_gas x_gpe1_blk;
 } PACKED;
 
 /* MADT Table (Multiple APIC Description Table) */
@@ -133,6 +159,7 @@ struct acpi_madt_local_apic_override {
 struct multiboot_info;
 bool acpi_init(struct multiboot_info *mbi);
 void acpi_poweroff(void);
+void acpi_reboot(void);
 bool acpi_is_supported(void);
 struct acpi_sdt_header *acpi_find_table(const char *signature);
 struct acpi_madt *acpi_get_madt(void);

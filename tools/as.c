@@ -200,6 +200,8 @@ static const char *find_label_colon(const char *p) {
     return NULL;
 }
 
+static void assemble_line(const char *line, int line_idx, int pass);
+
 static int get_or_create_section(const char *name, uint32_t type, uint32_t flags, uint32_t align) {
     int i;
     for (i = 1; i <= g_section_count; i++) {
@@ -1021,6 +1023,28 @@ static void assemble_line(const char *line, int line_idx, int pass) {
     if (strcmp(token, "cli") == 0) { sec_emit_byte(g_cur_section, 0xFA); return; }
     if (strcmp(token, "sti") == 0) { sec_emit_byte(g_cur_section, 0xFB); return; }
     if (strcmp(token, "hlt") == 0) { sec_emit_byte(g_cur_section, 0xF4); return; }
+    if (strcmp(token, "cld") == 0) { sec_emit_byte(g_cur_section, 0xFC); return; }
+    if (strcmp(token, "std") == 0) { sec_emit_byte(g_cur_section, 0xFD); return; }
+    if (strcmp(token, "movsb") == 0) { sec_emit_byte(g_cur_section, 0xA4); return; }
+    if (strcmp(token, "movsw") == 0) { sec_emit_byte(g_cur_section, 0x66); sec_emit_byte(g_cur_section, 0xA5); return; }
+    if (strcmp(token, "movsl") == 0 || strcmp(token, "movsd") == 0) { sec_emit_byte(g_cur_section, 0xA5); return; }
+    if (strcmp(token, "stosb") == 0) { sec_emit_byte(g_cur_section, 0xAA); return; }
+    if (strcmp(token, "stosw") == 0) { sec_emit_byte(g_cur_section, 0x66); sec_emit_byte(g_cur_section, 0xAB); return; }
+    if (strcmp(token, "stosl") == 0 || strcmp(token, "stosd") == 0) { sec_emit_byte(g_cur_section, 0xAB); return; }
+    if (strcmp(token, "rep") == 0 || strcmp(token, "repz") == 0 || strcmp(token, "repe") == 0) {
+        sec_emit_byte(g_cur_section, 0xF3);
+        if (*p) {
+            assemble_line(p, line_idx, pass);
+        }
+        return;
+    }
+    if (strcmp(token, "repnz") == 0 || strcmp(token, "repne") == 0) {
+        sec_emit_byte(g_cur_section, 0xF2);
+        if (*p) {
+            assemble_line(p, line_idx, pass);
+        }
+        return;
+    }
     if (strcmp(token, "pusha") == 0 || strcmp(token, "pushal") == 0) { sec_emit_byte(g_cur_section, 0x60); return; }
     if (strcmp(token, "popa") == 0 || strcmp(token, "popal") == 0) { sec_emit_byte(g_cur_section, 0x61); return; }
     if (strcmp(token, "pushfl") == 0 || strcmp(token, "pushf") == 0) { sec_emit_byte(g_cur_section, 0x9C); return; }

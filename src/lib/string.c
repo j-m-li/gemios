@@ -6,6 +6,7 @@
 #include "string.h"
 #include "heap.h"
 
+/*
 void *memcpy(void *dest, const void *src, size_t n) {
     uint8_t *d = (uint8_t*)dest;
     const uint8_t *s = (const uint8_t*)src;
@@ -14,6 +15,7 @@ void *memcpy(void *dest, const void *src, size_t n) {
     }
     return dest;
 }
+*/
 
 void *memset(void *s, int c, size_t n) {
     uint8_t *p = (uint8_t*)s;
@@ -27,9 +29,7 @@ void *memmove(void *dest, const void *src, size_t n) {
     uint8_t *d = (uint8_t*)dest;
     const uint8_t *s = (const uint8_t*)src;
     if (d < s) {
-        while (n--) {
-            *d++ = *s++;
-        }
+	memcpy(dest, src, n);
     } else {
         d += n;
         s += n;

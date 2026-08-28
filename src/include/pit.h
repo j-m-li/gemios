@@ -11,6 +11,7 @@
 #define PIT_FREQUENCY 1000 /* 1000 Hz = 1ms tick */
 
 void pit_init(uint32_t frequency);
+void pit_tick(void);
 uint32_t pit_get_ticks(void);
 uint32_t pit_get_uptime_sec(void);
 uint32_t pit_get_uptime_ms(void);

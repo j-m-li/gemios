@@ -208,3 +208,35 @@ cpu_set_msr:
     wrmsr
     ret
 
+.globl memcpy
+.type memcpy, @function
+memcpy:
+    pushl %esi
+    pushl %edi
+
+    movl 12(%esp), %edi      # EDI = dest
+    movl 16(%esp), %esi      # ESI = src
+    movl 20(%esp), %ecx      # ECX = n
+
+    cld
+
+    testl %ecx, %ecx
+    jz .Lmemcpy_done
+
+    # Copy dwords first: ECX / 4
+    movl %ecx, %eax
+    shrl $2, %ecx
+    rep movsl
+
+    # Copy remaining trailing bytes: EAX % 4
+    movl %eax, %ecx
+    andl $3, %ecx
+    rep movsb
+
+.Lmemcpy_done:
+    movl 12(%esp), %eax      # Return original dest pointer
+    popl %edi
+    popl %esi
+    ret
+
+

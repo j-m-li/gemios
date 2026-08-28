@@ -798,8 +798,8 @@ static void cmd_clear(int argc, char **argv) {
 static void cmd_reboot(int argc, char **argv) {
     UNUSED(argc);
     UNUSED(argv);
-    kprintf("Rebooting system...\n");
-    arch_reboot();
+    kprintf("Rebooting system via ACPI...\n");
+    acpi_reboot();
 }
 
 static void cmd_shutdown(int argc, char **argv) {

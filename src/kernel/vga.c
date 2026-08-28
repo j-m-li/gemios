@@ -478,7 +478,7 @@ static void vga_scroll(void) {
         size_t scroll_h = (scroll_bottom - scroll_top) * FONT_HEIGHT;
         uint32_t bg_pix = vga_color_to_pixel((uint8_t)((current_color >> 4) & 0x0F));
 
-        memmove((void*)(fb.paddr + top_py * fb.pitch),
+        memcpy((void*)(fb.paddr + top_py * fb.pitch),
                 (const void*)(fb.paddr + (top_py + FONT_HEIGHT) * fb.pitch),
                 scroll_h * fb.pitch);
 

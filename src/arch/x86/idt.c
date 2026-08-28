@@ -6,6 +6,7 @@
 #include "idt.h"
 #include "gdt.h"
 #include "pic.h"
+#include "pit.h"
 #include "apic.h"
 #include "string.h"
 #include "io.h"
@@ -113,6 +114,7 @@ uint32_t isr_handler(registers_t *regs) {
         } else {
             pic_send_eoi(0);
         }
+        pit_tick();
         if (interrupt_handlers[32]) {
             interrupt_handlers[32](regs);
         }
