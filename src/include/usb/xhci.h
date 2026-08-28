@@ -81,6 +81,8 @@ int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input
 int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx);
 int xhci_cmd_evaluate_ctx(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx);
 int xhci_cmd_reset_ep(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_id);
+int xhci_cmd_set_tr_dequeue(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, phys_addr_t tr_dequeue_ptr, uint8_t dcs);
+int xhci_clear_endpoint_stall(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, uint8_t ep_addr);
 
 /* Ring & Doorbell helpers */
 void xhci_ring_doorbell(xhci_controller_t *ctrl, uint8_t target_slot, uint8_t target_dci);

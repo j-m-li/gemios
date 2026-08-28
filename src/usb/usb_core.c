@@ -63,6 +63,7 @@ void usb_remove_device(uint8_t slot_id) {
     size_t i;
     for (i = 0; i < USB_MAX_DEVICES; i++) {
         if (usb_devices[i].active && usb_devices[i].slot_id == slot_id) {
+            usb_msc_remove_device(&usb_devices[i]);
             if (usb_devices[i].raw_config_desc) {
                 kfree(usb_devices[i].raw_config_desc);
             }
@@ -77,6 +78,16 @@ usb_device_t *usb_get_device_by_slot(uint8_t slot_id) {
     size_t i;
     for (i = 0; i < USB_MAX_DEVICES; i++) {
         if (usb_devices[i].active && usb_devices[i].slot_id == slot_id) {
+            return &usb_devices[i];
+        }
+    }
+    return NULL;
+}
+
+usb_device_t *usb_get_device_by_root_port(uint8_t root_port) {
+    size_t i;
+    for (i = 0; i < USB_MAX_DEVICES; i++) {
+        if (usb_devices[i].active && usb_devices[i].root_port == root_port && usb_devices[i].parent_hub_slot == 0) {
             return &usb_devices[i];
         }
     }
@@ -128,6 +139,15 @@ int usb_set_configuration(usb_device_t *dev, uint8_t config_val) {
     return usb_control_msg(dev, USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_DEVICE,
                            USB_REQ_SET_CONFIGURATION,
                            config_val, 0, NULL, 0);
+}
+
+int usb_clear_feature_endpoint_halt(usb_device_t *dev, uint8_t ep_addr) {
+    return usb_control_msg(dev,
+                           USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_ENDPOINT,
+                           USB_REQ_CLEAR_FEATURE,
+                           0, /* ENDPOINT_HALT = 0 */
+                           ep_addr,
+                           NULL, 0);
 }
 
 static void ring_init(xhci_ring_t *ring, uint32_t size) {
@@ -348,6 +368,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                 else if (xfer_type == 2) ep_type = dir_in ? 6 : 2; /* Bulk */
                 else if (xfer_type == 3) ep_type = dir_in ? 7 : 3; /* Interrupt */
 
+                uint8_t max_burst;
+
                 interval = ep->interval;
                 if (speed == USB_SPEED_FULL || speed == USB_SPEED_LOW) {
                     /* In xHCI interval is encoded as 2^(interval-1)*125us */
@@ -355,14 +377,19 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                     interval = 3; /* ~1ms default */
                 }
 
+                max_burst = 0;
+                if (speed >= USB_SPEED_SUPER && (p + len < end) && (p[len + 1] == USB_DESC_SS_EP_COMPANION) && (p[len] >= 3)) {
+                    max_burst = p[len + 2]; /* bMaxBurst */
+                }
+
                 input_ctx->ep[dci - 1].info1 = (interval << 16);
-                input_ctx->ep[dci - 1].info2 = (3 << 1) | (ep_type << 3) | (ep->max_packet_size << 16);
+                input_ctx->ep[dci - 1].info2 = (3 << 1) | (ep_type << 3) | ((uint32_t)max_burst << 8) | (ep->max_packet_size << 16);
                 input_ctx->ep[dci - 1].tr_dequeue_lo = (uint32_t)slot->ep_rings[dci].phys_addr | 1;
                 input_ctx->ep[dci - 1].tr_dequeue_hi = 0;
                 input_ctx->ep[dci - 1].tx_info = (ep->max_packet_size & 0xFFFF);
 
-                kprintf("[USB]   Endpoint 0x%02x (DCI %u): Type=%u MaxPacket=%u Interval=%u\n",
-                        ep->address, dci, ep_type, ep->max_packet_size, ep->interval);
+                kprintf("[USB]   Endpoint 0x%02x (DCI %u): Type=%u MaxPacket=%u Burst=%u Interval=%u\n",
+                        ep->address, dci, ep_type, ep->max_packet_size, max_burst, ep->interval);
             }
         }
 

@@ -8,6 +8,8 @@
 #include "blockdev.h"
 #include "heap.h"
 #include "string.h"
+#include "pit.h"
+#include "vga.h"
 
 #define MAX_MSC_DEVS 4
 static usb_msc_dev_t msc_devs[MAX_MSC_DEVS];
@@ -19,6 +21,25 @@ static uint32_t be32(uint32_t val) {
            ((val >> 8) & 0xFF00) |
            ((val << 8) & 0xFF0000) |
            ((val << 24) & 0xFF000000);
+}
+
+static int msc_get_max_lun(usb_msc_dev_t *msc) {
+    uint8_t max_lun;
+    int res;
+
+    max_lun = 0;
+    res = usb_control_msg(msc->dev,
+                          USB_REQ_TYPE_CLASS | USB_DIR_IN | USB_REQ_RECIPIENT_INTERFACE,
+                          0xFE, /* GET_MAX_LUN */
+                          0, 0, &max_lun, 1);
+    if (res == 0) {
+        msc->max_lun = max_lun;
+    } else {
+        msc->max_lun = 0;
+        /* If GET_MAX_LUN STALLed, clear EP0 stall */
+        usb_clear_feature_endpoint_halt(msc->dev, 0);
+    }
+    return 0;
 }
 
 static int msc_bot_transfer(usb_msc_dev_t *msc, const void *cdb, uint8_t cdb_len,
@@ -35,56 +56,54 @@ static int msc_bot_transfer(usb_msc_dev_t *msc, const void *cdb, uint8_t cdb_len
     ctrl = xhci_get_controller();
     tag = ++msc_tag;
 
-    /* 1. Prepare Command Block Wrapper (CBW - exactly 31 bytes) */
+    /* 1. Command Block Wrapper (CBW - 31 bytes) */
     memset(cbw, 0, USB_MSC_CBW_SIZE);
-    /* dCBWSignature = 0x43425355 ("USBC") */
     cbw[0] = 0x55;
     cbw[1] = 0x53;
     cbw[2] = 0x42;
-    cbw[3] = 0x43;
-    /* dCBWTag */
+    cbw[3] = 0x43; /* "USBC" */
     cbw[4] = (uint8_t)(tag & 0xFF);
     cbw[5] = (uint8_t)((tag >> 8) & 0xFF);
     cbw[6] = (uint8_t)((tag >> 16) & 0xFF);
     cbw[7] = (uint8_t)((tag >> 24) & 0xFF);
-    /* dCBWDataTransferLength */
     cbw[8] = (uint8_t)(data_len & 0xFF);
     cbw[9] = (uint8_t)((data_len >> 8) & 0xFF);
     cbw[10] = (uint8_t)((data_len >> 16) & 0xFF);
     cbw[11] = (uint8_t)((data_len >> 24) & 0xFF);
-    /* bmCBWFlags */
     cbw[12] = dir_in ? USB_MSC_CBW_FLAG_IN : USB_MSC_CBW_FLAG_OUT;
-    /* bCBWLUN */
-    cbw[13] = 0;
-    /* bCBWCBLength */
+    cbw[13] = 0; /* LUN */
     cbw[14] = cdb_len;
-    /* CBWCB */
     memcpy(&cbw[15], cdb, cdb_len);
 
-    /* Send CBW via Bulk OUT (31 bytes) */
     res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->out_dci, cbw, USB_MSC_CBW_SIZE, false);
     if (res < 0) {
-        kprint_color(0x4F, "[MSC] Failed to send CBW (err %d)\n", res);
+        xhci_clear_endpoint_stall(ctrl, msc->dev->slot_id, msc->out_dci, msc->ep_out_addr);
         return res;
     }
 
     /* 2. Data Stage */
     if (data_len > 0 && data) {
         uint8_t dci;
+        uint8_t ep_addr;
         dci = dir_in ? msc->in_dci : msc->out_dci;
+        ep_addr = dir_in ? msc->ep_in_addr : msc->ep_out_addr;
         res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, dci, data, data_len, dir_in);
         if (res < 0) {
-            kprint_color(0x4F, "[MSC] Data stage failed (err %d)\n", res);
-            return res;
+            xhci_clear_endpoint_stall(ctrl, msc->dev->slot_id, dci, ep_addr);
         }
     }
 
-    /* 3. Receive Command Status Wrapper (CSW - exactly 13 bytes) via Bulk IN */
+    /* 3. Command Status Wrapper (CSW - 13 bytes) */
     memset(csw, 0, USB_MSC_CSW_SIZE);
     res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->in_dci, csw, USB_MSC_CSW_SIZE, true);
     if (res < 0) {
-        kprint_color(0x4F, "[MSC] Failed to receive CSW (err %d)\n", res);
-        return res;
+        /* Clear IN stall and retry reading CSW */
+        xhci_clear_endpoint_stall(ctrl, msc->dev->slot_id, msc->in_dci, msc->ep_in_addr);
+        memset(csw, 0, USB_MSC_CSW_SIZE);
+        res = xhci_bulk_transfer(ctrl, msc->dev->slot_id, msc->in_dci, csw, USB_MSC_CSW_SIZE, true);
+        if (res < 0) {
+            return res;
+        }
     }
 
     csw_sig = (uint32_t)csw[0] | ((uint32_t)csw[1] << 8) | ((uint32_t)csw[2] << 16) | ((uint32_t)csw[3] << 24);
@@ -92,12 +111,29 @@ static int msc_bot_transfer(usb_msc_dev_t *msc, const void *cdb, uint8_t cdb_len
     csw_status = csw[12];
 
     if (csw_sig != USB_MSC_CSW_SIGNATURE || csw_tag != tag) {
-        kprint_color(0x4F, "[MSC] CSW Signature/Tag mismatch! (sig=0x%x, tag=0x%x)\n",
-                     csw_sig, csw_tag);
         return -1;
     }
 
     return (csw_status == USB_MSC_CSW_STATUS_PASSED) ? 0 : -(int)csw_status;
+}
+
+static int scsi_request_sense(usb_msc_dev_t *msc, uint8_t *sense_key, uint8_t *asc, uint8_t *ascq) {
+    uint8_t cdb[6];
+    uint8_t buffer[18];
+    int res;
+
+    memset(cdb, 0, sizeof(cdb));
+    cdb[0] = SCSI_REQUEST_SENSE;
+    cdb[4] = sizeof(buffer); /* 18 bytes */
+
+    memset(buffer, 0, sizeof(buffer));
+    res = msc_bot_transfer(msc, cdb, sizeof(cdb), buffer, sizeof(buffer), true);
+    if (res == 0) {
+        if (sense_key) *sense_key = buffer[2] & 0x0F;
+        if (asc) *asc = buffer[12];
+        if (ascq) *ascq = buffer[13];
+    }
+    return res;
 }
 
 static int scsi_inquiry(usb_msc_dev_t *msc) {
@@ -167,41 +203,97 @@ static int scsi_read_capacity(usb_msc_dev_t *msc) {
 }
 
 int usb_msc_read_blocks(usb_msc_dev_t *msc, uint32_t lba, uint32_t count, void *buf) {
-    uint8_t cdb[10];
-    uint32_t bytes;
+    uint8_t *ptr;
+    uint32_t remaining;
+    uint32_t cur_lba;
 
-    if (!msc || !msc->ready || count == 0) return -1;
+    if (!msc || !msc->ready || count == 0 || !buf) return -1;
 
-    memset(cdb, 0, sizeof(cdb));
-    cdb[0] = SCSI_READ10;
-    cdb[2] = (uint8_t)((lba >> 24) & 0xFF);
-    cdb[3] = (uint8_t)((lba >> 16) & 0xFF);
-    cdb[4] = (uint8_t)((lba >> 8) & 0xFF);
-    cdb[5] = (uint8_t)(lba & 0xFF);
-    cdb[7] = (uint8_t)((count >> 8) & 0xFF);
-    cdb[8] = (uint8_t)(count & 0xFF);
+    ptr = (uint8_t*)buf;
+    remaining = count;
+    cur_lba = lba;
 
-    bytes = count * msc->block_size;
-    return msc_bot_transfer(msc, cdb, sizeof(cdb), buf, bytes, true);
+    while (remaining > 0) {
+        uint32_t chunk;
+        uint8_t cdb[10];
+        uint32_t bytes;
+        int res;
+        int retries;
+
+        chunk = (remaining > 64) ? 64 : remaining;
+        bytes = chunk * msc->block_size;
+
+        memset(cdb, 0, sizeof(cdb));
+        cdb[0] = SCSI_READ10;
+        cdb[2] = (uint8_t)((cur_lba >> 24) & 0xFF);
+        cdb[3] = (uint8_t)((cur_lba >> 16) & 0xFF);
+        cdb[4] = (uint8_t)((cur_lba >> 8) & 0xFF);
+        cdb[5] = (uint8_t)(cur_lba & 0xFF);
+        cdb[7] = (uint8_t)((chunk >> 8) & 0xFF);
+        cdb[8] = (uint8_t)(chunk & 0xFF);
+
+        res = -1;
+        for (retries = 0; retries < 3; retries++) {
+            res = msc_bot_transfer(msc, cdb, sizeof(cdb), ptr, bytes, true);
+            if (res == 0) break;
+            pit_delay_ms(10);
+        }
+
+        if (res != 0) return res;
+
+        ptr += bytes;
+        cur_lba += chunk;
+        remaining -= chunk;
+    }
+
+    return 0;
 }
 
 int usb_msc_write_blocks(usb_msc_dev_t *msc, uint32_t lba, uint32_t count, const void *buf) {
-    uint8_t cdb[10];
-    uint32_t bytes;
+    const uint8_t *ptr;
+    uint32_t remaining;
+    uint32_t cur_lba;
 
-    if (!msc || !msc->ready || count == 0) return -1;
+    if (!msc || !msc->ready || count == 0 || !buf) return -1;
 
-    memset(cdb, 0, sizeof(cdb));
-    cdb[0] = SCSI_WRITE10;
-    cdb[2] = (uint8_t)((lba >> 24) & 0xFF);
-    cdb[3] = (uint8_t)((lba >> 16) & 0xFF);
-    cdb[4] = (uint8_t)((lba >> 8) & 0xFF);
-    cdb[5] = (uint8_t)(lba & 0xFF);
-    cdb[7] = (uint8_t)((count >> 8) & 0xFF);
-    cdb[8] = (uint8_t)(count & 0xFF);
+    ptr = (const uint8_t*)buf;
+    remaining = count;
+    cur_lba = lba;
 
-    bytes = count * msc->block_size;
-    return msc_bot_transfer(msc, cdb, sizeof(cdb), (void*)buf, bytes, false);
+    while (remaining > 0) {
+        uint32_t chunk;
+        uint8_t cdb[10];
+        uint32_t bytes;
+        int res;
+        int retries;
+
+        chunk = (remaining > 64) ? 64 : remaining;
+        bytes = chunk * msc->block_size;
+
+        memset(cdb, 0, sizeof(cdb));
+        cdb[0] = SCSI_WRITE10;
+        cdb[2] = (uint8_t)((cur_lba >> 24) & 0xFF);
+        cdb[3] = (uint8_t)((cur_lba >> 16) & 0xFF);
+        cdb[4] = (uint8_t)((cur_lba >> 8) & 0xFF);
+        cdb[5] = (uint8_t)(cur_lba & 0xFF);
+        cdb[7] = (uint8_t)((chunk >> 8) & 0xFF);
+        cdb[8] = (uint8_t)(chunk & 0xFF);
+
+        res = -1;
+        for (retries = 0; retries < 3; retries++) {
+            res = msc_bot_transfer(msc, cdb, sizeof(cdb), (void*)ptr, bytes, false);
+            if (res == 0) break;
+            pit_delay_ms(10);
+        }
+
+        if (res != 0) return res;
+
+        ptr += bytes;
+        cur_lba += chunk;
+        remaining -= chunk;
+    }
+
+    return 0;
 }
 
 static int bdev_read_wrapper(block_dev_t *bdev, uint32_t lba, uint32_t count, void *buf) {
@@ -221,6 +313,7 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
     usb_endpoint_t *out_ep;
     uint8_t i;
     usb_msc_dev_t *msc;
+    int retries;
 
     if (msc_count >= MAX_MSC_DEVS) return -1;
 
@@ -255,19 +348,68 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
     msc->max_packet_in = in_ep->max_packet_size;
     msc->max_packet_out = out_ep->max_packet_size;
 
-    /* Execute SCSI Inquiry */
-    if (scsi_inquiry(msc) != 0) {
-        kprint_color(0x4F, "[MSC] SCSI INQUIRY failed on Slot %u\n", dev->slot_id);
-        return -1;
+    /* 1. Query Maximum Logical Unit Number (Max LUN) */
+    msc_get_max_lun(msc);
+
+    /* 2. Execute SCSI Inquiry with retries */
+    for (retries = 0; retries < 3; retries++) {
+        if (scsi_inquiry(msc) == 0) break;
+        pit_delay_ms(50);
     }
 
-    /* Check Test Unit Ready */
-    scsi_test_unit_ready(msc);
+    /* 3. Wait for drive ready (Test Unit Ready loop) */
+    {
+        int ready_retries;
+        bool is_ready;
 
-    /* Read Capacity */
-    if (scsi_read_capacity(msc) != 0) {
-        kprint_color(0x4F, "[MSC] SCSI READ CAPACITY failed on Slot %u\n", dev->slot_id);
-        return -1;
+        is_ready = false;
+        for (ready_retries = 0; ready_retries < 30; ready_retries++) {
+            uint8_t sense_key;
+            uint8_t asc;
+            uint8_t ascq;
+
+            sense_key = 0;
+            asc = 0;
+            ascq = 0;
+
+            if (scsi_test_unit_ready(msc) == 0) {
+                is_ready = true;
+                break;
+            }
+
+            /* Read Sense Data to clear Unit Attention */
+            scsi_request_sense(msc, &sense_key, &asc, &ascq);
+            pit_delay_ms(100);
+        }
+
+        if (!is_ready) {
+            kprintf("[MSC] Warning: Device on Slot %u not reporting READY, attempting READ CAPACITY...\n",
+                    dev->slot_id);
+        }
+    }
+
+    /* 4. Read Capacity with retries */
+    {
+        int cap_retries;
+        bool cap_ok;
+
+        cap_ok = false;
+        for (cap_retries = 0; cap_retries < 5; cap_retries++) {
+            if (scsi_read_capacity(msc) == 0 && msc->block_count > 0) {
+                cap_ok = true;
+                break;
+            }
+            pit_delay_ms(100);
+        }
+
+        if (!cap_ok) {
+            kprint_color(0x4F, "[MSC] SCSI READ CAPACITY failed on Slot %u\n", dev->slot_id);
+            return -1;
+        }
+    }
+
+    if (msc->block_size == 0 || msc->block_size > 4096) {
+        msc->block_size = 512;
     }
 
     msc->ready = true;
@@ -291,6 +433,25 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
     msc_count++;
 
     return 0;
+}
+
+int usb_msc_remove_device(usb_device_t *dev) {
+    size_t i;
+    size_t j;
+
+    if (!dev) return -1;
+
+    for (i = 0; i < msc_count; i++) {
+        if (msc_devs[i].dev == dev) {
+            blockdev_unregister(&msc_devs[i].bdev);
+            for (j = i; j < msc_count - 1; j++) {
+                msc_devs[j] = msc_devs[j + 1];
+            }
+            msc_count--;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 size_t usb_msc_get_count(void) {

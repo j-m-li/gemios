@@ -73,6 +73,7 @@ typedef struct usb_msc_dev {
 } usb_msc_dev_t;
 
 int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface);
+int usb_msc_remove_device(usb_device_t *dev);
 int usb_msc_read_blocks(usb_msc_dev_t *msc, uint32_t lba, uint32_t count, void *buf);
 int usb_msc_write_blocks(usb_msc_dev_t *msc, uint32_t lba, uint32_t count, const void *buf);
 

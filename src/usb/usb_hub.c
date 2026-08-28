@@ -149,7 +149,71 @@ int usb_hub_init_device(usb_device_t *dev) {
 }
 
 void usb_hub_poll(void) {
-    /* Background polling for hub port hot-plugging if needed */
+    size_t h;
+    for (h = 0; h < hub_count; h++) {
+        usb_hub_t *hub;
+        uint8_t port;
+        xhci_controller_t *ctrl;
+
+        hub = &hubs[h];
+        if (!hub->dev || !hub->dev->active) continue;
+
+        ctrl = xhci_get_controller();
+
+        for (port = 1; port <= hub->num_ports; port++) {
+            uint32_t port_status;
+            uint16_t stat;
+            uint16_t change;
+            int res;
+
+            port_status = 0;
+            res = hub_get_port_status(hub->dev, port, &port_status);
+            if (res != 0) continue;
+
+            stat = (uint16_t)(port_status & 0xFFFF);
+            change = (uint16_t)((port_status >> 16) & 0xFFFF);
+
+            if (change & (USB_HUB_PORT_STAT_CONNECTION | (1 << 4))) {
+                hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
+                hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_RESET);
+
+                if (stat & USB_HUB_PORT_STAT_CONNECTION) {
+                    uint8_t speed;
+                    uint32_t route_string;
+                    uint32_t shift;
+                    uint8_t child_slot;
+
+                    kprintf("[HUB] Hub Slot %u Port %u: Device attached, resetting...\n", hub->dev->slot_id, port);
+                    hub_set_port_feature(hub->dev, port, USB_HUB_FEAT_PORT_RESET);
+                    rtos_sleep_ms(60);
+
+                    hub_get_port_status(hub->dev, port, &port_status);
+                    stat = (uint16_t)(port_status & 0xFFFF);
+
+                    speed = USB_SPEED_FULL;
+                    if (stat & USB_HUB_PORT_STAT_LOW_SPEED) speed = USB_SPEED_LOW;
+                    else if (stat & USB_HUB_PORT_STAT_HIGH_SPEED) speed = USB_SPEED_HIGH;
+
+                    hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_RESET);
+                    hub_clear_port_feature(hub->dev, port, USB_HUB_FEAT_C_PORT_CONNECTION);
+
+                    route_string = hub->dev->route_string;
+                    shift = 0;
+                    while (shift < 20 && ((route_string >> shift) & 0x0F) != 0) {
+                        shift += 4;
+                    }
+                    if (shift < 20) {
+                        route_string |= ((uint32_t)(port & 0x0F) << shift);
+                    }
+
+                    child_slot = 0;
+                    if (xhci_cmd_enable_slot(ctrl, &child_slot) == 0 && child_slot > 0) {
+                        usb_enumerate_device(ctrl, child_slot, speed, hub->dev->root_port, hub->dev->slot_id, port, route_string);
+                    }
+                }
+            }
+        }
+    }
 }
 
 size_t usb_hub_get_count(void) {

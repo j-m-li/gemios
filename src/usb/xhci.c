@@ -262,10 +262,10 @@ bool xhci_init(pci_device_t *pci_dev) {
         portsc_reg = g_xhci.op_base + XHCI_OP_PORTSC_BASE + ((p_idx - 1) * 0x10);
         portsc = mmio_read32(portsc_reg);
         if (!(portsc & XHCI_PORTSC_PP)) {
-            mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PP);
+            mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PP);
         }
     }
-    pit_delay_ms(20);
+    pit_delay_ms(100); /* 100ms connection debounce & stabilization (USB TATTDB) */
 
     g_xhci.initialized = true;
     kprintf("[xHCI] Host Controller started successfully.\n");
@@ -415,6 +415,39 @@ int xhci_cmd_reset_ep(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_id) {
     memset(&trb, 0, sizeof(trb));
     trb.control = TRB_SET_TYPE(TRB_TYPE_RESET_EP) | TRB_SLOT_ID(slot_id) | (((uint32_t)ep_id & 0x1F) << 16);
     return xhci_submit_cmd(ctrl, &trb, NULL);
+}
+
+int xhci_cmd_set_tr_dequeue(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, phys_addr_t tr_dequeue_ptr, uint8_t dcs) {
+    xhci_trb_t trb;
+    memset(&trb, 0, sizeof(trb));
+    trb.parameter_lo = (uint32_t)tr_dequeue_ptr | (dcs & 0x01);
+    trb.parameter_hi = 0;
+    trb.control = TRB_SET_TYPE(TRB_TYPE_SET_TR_DEQUEUE) | TRB_SLOT_ID(slot_id) | (((uint32_t)ep_dci & 0x1F) << 16);
+    return xhci_submit_cmd(ctrl, &trb, NULL);
+}
+
+int xhci_clear_endpoint_stall(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, uint8_t ep_addr) {
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
+    phys_addr_t dequeue_ptr;
+
+    if (slot_id > XHCI_MAX_SLOTS || ep_dci >= 32) return -1;
+
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[ep_dci];
+
+    /* 1. Reset xHCI Endpoint (moves EP from Halted to Stopped) */
+    xhci_cmd_reset_ep(ctrl, slot_id, ep_dci);
+
+    /* 2. Update TR Dequeue Pointer to current ring position */
+    dequeue_ptr = ring->phys_addr + (ring->dequeue_idx * sizeof(xhci_trb_t));
+    xhci_cmd_set_tr_dequeue(ctrl, slot_id, ep_dci, dequeue_ptr, ring->cycle);
+
+    /* 3. Send Clear Feature (ENDPOINT_HALT) to USB device */
+    if (slot->usb_dev) {
+        usb_clear_feature_endpoint_halt((usb_device_t*)slot->usb_dev, ep_addr);
+    }
+    return 0;
 }
 
 void xhci_init_ep_ring(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci) {
@@ -578,53 +611,89 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
     for (port = 1; port <= ctrl->max_ports; port++) {
         uintptr_t portsc_reg;
         uint32_t portsc;
+        uint8_t speed;
+        uint8_t slot_id;
+        int i;
 
         portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
         portsc = mmio_read32(portsc_reg);
 
         /* Ensure port is powered */
         if (!(portsc & XHCI_PORTSC_PP)) {
-            mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PP);
+            mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PP);
             pit_delay_ms(20);
             portsc = mmio_read32(portsc_reg);
         }
 
-        if (portsc & XHCI_PORTSC_CCS) {
-            uint8_t speed;
-            uint8_t slot_id;
+        if (!(portsc & XHCI_PORTSC_CCS)) {
+            continue;
+        }
 
-            /* Check if port is already enabled (e.g. SuperSpeed U0 state) */
-            if (!(portsc & XHCI_PORTSC_PED)) {
-                int i;
-                volatile int d;
+        /* Skip if a device on this root port is already enumerated */
+        if (usb_get_device_by_root_port(port) != NULL) {
+            continue;
+        }
 
-                kprintf("[xHCI] Port %u: Device detected. Resetting port...\n", port);
-                mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | XHCI_PORTSC_PR);
+        kprintf("[xHCI] Port %u: Device detected (PORTSC=0x%08x)\n", port, portsc);
 
-                for (i = 0; i < 200; i++) {
+        /* If port is not enabled, perform Port Reset */
+        if (!(portsc & XHCI_PORTSC_PED)) {
+            uint32_t reset_cmd;
+            bool reset_ok;
+
+            reset_cmd = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR;
+            mmio_write32(portsc_reg, reset_cmd);
+
+            reset_ok = false;
+            for (i = 0; i < 150; i++) {
+                pit_delay_ms(1);
+                portsc = mmio_read32(portsc_reg);
+                if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                    reset_ok = true;
+                    break;
+                }
+            }
+
+            /* If normal reset did not enable port, try Warm Port Reset (for SuperSpeed) */
+            if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
+                mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
+                for (i = 0; i < 150; i++) {
+                    pit_delay_ms(1);
                     portsc = mmio_read32(portsc_reg);
-                    if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                    if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                        reset_ok = true;
                         break;
                     }
-                    for (d = 0; d < 10000; d++);
                 }
-
-                /* Clear change bits (W1C) */
-                mmio_write32(portsc_reg, (portsc & ~XHCI_PORTSC_W1C_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
-                portsc = mmio_read32(portsc_reg);
             }
 
-            speed = XHCI_PORTSC_SPEED(portsc);
-            kprintf("[xHCI] Port %u: Connected. Speed = %s (%u)\n",
-                    port, usb_speed_to_string(speed), speed);
+            /* Clear change bits (W1C) */
+            mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
+            pit_delay_ms(15); /* Port Reset Recovery delay (TRSTRCY = 10ms - 20ms) */
+            portsc = mmio_read32(portsc_reg);
+        }
 
-            slot_id = 0;
-            if (xhci_cmd_enable_slot(ctrl, &slot_id) == 0 && slot_id > 0) {
-                kprintf("[xHCI] Allocated Slot ID %u for Port %u\n", slot_id, port);
-                usb_enumerate_device(ctrl, slot_id, speed, port, 0, 0, 0);
-            } else {
-                kprint_color(0x4F, "[xHCI] Failed to enable slot for Port %u\n", port);
+        if (!(portsc & XHCI_PORTSC_CCS) || !(portsc & XHCI_PORTSC_PED)) {
+            kprintf("[xHCI] Port %u: Port not enabled after reset (PORTSC=0x%08x)\n", port, portsc);
+            continue;
+        }
+
+        speed = XHCI_PORTSC_SPEED(portsc);
+        kprintf("[xHCI] Port %u: Connected. Speed = %s (%u)\n",
+                port, usb_speed_to_string(speed), speed);
+
+        slot_id = 0;
+        if (xhci_cmd_enable_slot(ctrl, &slot_id) == 0 && slot_id > 0) {
+            int enum_res;
+            kprintf("[xHCI] Allocated Slot ID %u for Port %u\n", slot_id, port);
+            enum_res = usb_enumerate_device(ctrl, slot_id, speed, port, 0, 0, 0);
+            if (enum_res != 0) {
+                kprint_color(0x4F, "[xHCI] Enumeration failed on Port %u Slot %u (err %d), disabling slot\n",
+                             port, slot_id, enum_res);
+                xhci_cmd_disable_slot(ctrl, slot_id);
             }
+        } else {
+            kprint_color(0x4F, "[xHCI] Failed to enable slot for Port %u\n", port);
         }
     }
 }
@@ -644,7 +713,31 @@ void xhci_poll(void) {
         } else if (type == TRB_TYPE_PORT_STATUS_CHANGE) {
             uint8_t port_id;
             port_id = (evt->parameter_lo >> 24) & 0xFF;
-            kprintf("[xHCI Event] Port %u status change\n", port_id);
+            if (port_id >= 1 && port_id <= g_xhci.max_ports) {
+                uintptr_t portsc_reg;
+                uint32_t portsc;
+                portsc_reg = g_xhci.op_base + XHCI_OP_PORTSC_BASE + ((port_id - 1) * 0x10);
+                portsc = mmio_read32(portsc_reg);
+                /* Clear change bits */
+                mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
+
+                if (portsc & XHCI_PORTSC_CCS) {
+                    if (usb_get_device_by_root_port(port_id) == NULL) {
+                        kprintf("[xHCI Event] Port %u device connected, scanning...\n", port_id);
+                        xhci_unlock();
+                        xhci_scan_ports(&g_xhci);
+                        xhci_lock();
+                    }
+                } else {
+                    usb_device_t *dev = usb_get_device_by_root_port(port_id);
+                    if (dev && dev->parent_hub_slot == 0) {
+                        uint8_t s_id = dev->slot_id;
+                        kprintf("[xHCI Event] Port %u (Slot %u) disconnected\n", port_id, s_id);
+                        usb_remove_device(s_id);
+                        xhci_cmd_disable_slot(&g_xhci, s_id);
+                    }
+                }
+            }
         }
     }
     xhci_unlock();

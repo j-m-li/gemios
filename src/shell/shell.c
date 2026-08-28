@@ -74,6 +74,7 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  mem                   - Display memory and heap statistics\n");
     kprintf("  pci                   - List all PCI bus devices\n");
     kprintf("  lsusb                 - List USB devices (xHCI, HID, Hub, MSC)\n");
+    kprintf("  rescan                - Rescan USB ports and USB Hubs for new devices\n");
     kprintf("  storage               - List USB Mass Storage devices\n");
     kprintf("  readsec <dev> <lba>   - Read and hexdump a block from storage\n");
     kprintf("  writesec <dev> <lba> <s> - Write text into a block on storage\n");
@@ -237,6 +238,16 @@ static void cmd_lsusb(int argc, char **argv) {
             }
         }
     }
+}
+
+static void cmd_rescan(int argc, char **argv) {
+    UNUSED(argc);
+    UNUSED(argv);
+    kprintf("Rescanning USB xHCI ports and Hubs...\n");
+    xhci_scan_ports(xhci_get_controller());
+    usb_hub_poll();
+    kprintf("USB rescan complete. Detected %u USB device(s), %u storage block device(s).\n",
+            (uint32_t)usb_get_device_count(), (uint32_t)blockdev_count());
 }
 
 static void cmd_storage(int argc, char **argv) {
@@ -893,6 +904,7 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "mem") == 0) cmd_mem(argc, argv);
     else if (strcmp(argv[0], "pci") == 0) cmd_pci(argc, argv);
     else if (strcmp(argv[0], "lsusb") == 0) cmd_lsusb(argc, argv);
+    else if (strcmp(argv[0], "rescan") == 0 || strcmp(argv[0], "usbrescan") == 0) cmd_rescan(argc, argv);
     else if (strcmp(argv[0], "storage") == 0) cmd_storage(argc, argv);
     else if (strcmp(argv[0], "readsec") == 0) cmd_readsec(argc, argv);
     else if (strcmp(argv[0], "writesec") == 0) cmd_writesec(argc, argv);

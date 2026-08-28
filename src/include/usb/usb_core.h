@@ -59,11 +59,13 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 void usb_remove_device(uint8_t slot_id);
 
 usb_device_t *usb_get_device_by_slot(uint8_t slot_id);
+usb_device_t *usb_get_device_by_root_port(uint8_t root_port);
 size_t usb_get_device_count(void);
 usb_device_t *usb_get_device_by_index(size_t index);
 
 int usb_control_msg(usb_device_t *dev, uint8_t req_type, uint8_t request, uint16_t value, uint16_t index, void *data, uint16_t len);
 int usb_get_descriptor(usb_device_t *dev, uint8_t desc_type, uint8_t desc_index, void *data, uint16_t len);
 int usb_set_configuration(usb_device_t *dev, uint8_t config_val);
+int usb_clear_feature_endpoint_halt(usb_device_t *dev, uint8_t ep_addr);
 
 #endif /* GEMIOS_USB_CORE_H */

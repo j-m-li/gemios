@@ -62,24 +62,49 @@
 #define XHCI_CRCR_CRR           (1U << 3) /* Command Ring Running */
 
 /* PORTSC Bits */
-#define XHCI_PORTSC_CCS         (1 << 0)   /* Current Connect Status */
-#define XHCI_PORTSC_PED         (1 << 1)   /* Port Enabled/Disabled */
-#define XHCI_PORTSC_OCA         (1 << 3)   /* Over-current Active */
-#define XHCI_PORTSC_PR          (1 << 4)   /* Port Reset */
-#define XHCI_PORTSC_PLS_MASK    (0xF << 5) /* Port Link State */
-#define XHCI_PORTSC_PP          (1 << 9)   /* Port Power */
+#define XHCI_PORTSC_CCS         (1U << 0)   /* Current Connect Status */
+#define XHCI_PORTSC_PED         (1U << 1)   /* Port Enabled/Disabled (R/W1C - writing 1 disables port) */
+#define XHCI_PORTSC_OCA         (1U << 3)   /* Over-current Active */
+#define XHCI_PORTSC_PR          (1U << 4)   /* Port Reset */
+#define XHCI_PORTSC_PLS_MASK    (0xFU << 5) /* Port Link State */
+#define XHCI_PORTSC_PLS(p)      (((p) >> 5) & 0x0F)
+#define XHCI_PORTSC_PP          (1U << 9)   /* Port Power */
 #define XHCI_PORTSC_SPEED(p)    (((p) >> 10) & 0x0F) /* Port Speed */
-#define XHCI_PORTSC_LWS         (1 << 16)  /* Port Link State Write Strobe */
-#define XHCI_PORTSC_CSC         (1 << 17)  /* Connect Status Change */
-#define XHCI_PORTSC_PEC         (1 << 18)  /* Port Enable Change */
-#define XHCI_PORTSC_WRC         (1 << 19)  /* Warm Port Reset Change */
-#define XHCI_PORTSC_OCC         (1 << 20)  /* Over-current Change */
-#define XHCI_PORTSC_PRC         (1 << 21)  /* Port Reset Change */
-#define XHCI_PORTSC_PLC         (1 << 22)  /* Port Link State Change */
-#define XHCI_PORTSC_CEC         (1 << 23)  /* Config Error Change */
+#define XHCI_PORTSC_LWS         (1U << 16)  /* Port Link State Write Strobe */
+#define XHCI_PORTSC_CSC         (1U << 17)  /* Connect Status Change */
+#define XHCI_PORTSC_PEC         (1U << 18)  /* Port Enable Change */
+#define XHCI_PORTSC_WRC         (1U << 19)  /* Warm Port Reset Change */
+#define XHCI_PORTSC_OCC         (1U << 20)  /* Over-current Change */
+#define XHCI_PORTSC_PRC         (1U << 21)  /* Port Reset Change */
+#define XHCI_PORTSC_PLC         (1U << 22)  /* Port Link State Change */
+#define XHCI_PORTSC_CEC         (1U << 23)  /* Config Error Change */
+#define XHCI_PORTSC_CAS         (1U << 24)  /* Cold Attach Status */
+#define XHCI_PORTSC_WCE         (1U << 25)  /* Wake on Connect Enable */
+#define XHCI_PORTSC_WDE         (1U << 26)  /* Wake on Disconnect Enable */
+#define XHCI_PORTSC_WOE         (1U << 27)  /* Wake on Overcurrent Enable */
+#define XHCI_PORTSC_WPR         (1U << 31)  /* Warm Port Reset */
+
 #define XHCI_PORTSC_W1C_MASK    (XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC | \
                                  XHCI_PORTSC_OCC | XHCI_PORTSC_PRC | XHCI_PORTSC_PLC | \
                                  XHCI_PORTSC_CEC)
+
+/* Mask for preserving R/W fields and preventing accidental clearing of W1C / PED */
+#define XHCI_PORTSC_PRESERVE_MASK (XHCI_PORTSC_PP | XHCI_PORTSC_WCE | XHCI_PORTSC_WDE | XHCI_PORTSC_WOE)
+
+/* Port Link States */
+#define XHCI_PLS_U0             0
+#define XHCI_PLS_U1             1
+#define XHCI_PLS_U2             2
+#define XHCI_PLS_U3             3
+#define XHCI_PLS_DISABLED       4
+#define XHCI_PLS_RXDETECT       5
+#define XHCI_PLS_INACTIVE       6
+#define XHCI_PLS_POLLING        7
+#define XHCI_PLS_RECOVERY       8
+#define XHCI_PLS_HOT_RESET      9
+#define XHCI_PLS_COMPLIANCE     10
+#define XHCI_PLS_TEST_MODE      11
+#define XHCI_PLS_RESUME         15
 
 /* xHCI Runtime / Interrupter Register Offsets (relative to RtBase + 0x20*intr) */
 #define XHCI_INTR_IMAN          0x00
