@@ -34,15 +34,15 @@ fi
 echo "=========================================================="
 echo " Starting GEMIOS x86-32 Preemptive RTOS in QEMU VM"
 echo " Configuration:"
+echo "   - Display:         Graphical Multiboot Framebuffer / VGA"
 echo "   - Host Controller: USB 3.0 xHCI"
 echo "   - Disk Image:      $DISK_FILE"
 echo "   - Devices:         USB Keyboard, USB Mouse, USB Storage, USB Hub"
 echo "   - Downstream:      Secondary USB Mouse on USB Hub"
 echo "=========================================================="
 
-#exec $QEMU -s -S -kernel build/gemios.elf -m 256M \
-
-exec $QEMU  -kernel build/gemios.elf -m 256M \
+exec $QEMU -kernel build/gemios.elf -m 256M \
+    -vga std \
     $GRAPHICS_FLAG \
     -device qemu-xhci,id=xhci,p2=8,p3=8 \
     -device usb-kbd,bus=xhci.0,port=1 \

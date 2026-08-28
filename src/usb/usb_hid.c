@@ -160,13 +160,16 @@ static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
 }
 
 static void process_mouse_report(usb_hid_mouse_t *mouse, usb_mouse_report_t *report) {
+    size_t cols = vga_get_cols();
+    size_t rows = vga_get_rows();
+
     mouse->x += report->dx;
     mouse->y += report->dy;
 
     if (mouse->x < 0) mouse->x = 0;
-    if (mouse->x >= VGA_WIDTH) mouse->x = VGA_WIDTH - 1;
+    if (mouse->x >= (int32_t)cols) mouse->x = (int32_t)cols - 1;
     if (mouse->y < 1) mouse->y = 1;
-    if (mouse->y >= VGA_HEIGHT - 1) mouse->y = VGA_HEIGHT - 2;
+    if (mouse->y >= (int32_t)rows - 1) mouse->y = (int32_t)rows - 2;
 
     mouse->buttons = report->buttons;
     vga_update_mouse_status(mouse->x, mouse->y, mouse->buttons);
@@ -277,8 +280,8 @@ int usb_hid_init_device(usb_device_t *dev, usb_interface_t *iface) {
             m->ep_addr = in_ep->address;
             m->max_packet = in_ep->max_packet_size;
             m->interval = in_ep->interval;
-            m->x = VGA_WIDTH / 2;
-            m->y = VGA_HEIGHT / 2;
+            m->x = (int32_t)(vga_get_cols() / 2);
+            m->y = (int32_t)(vga_get_rows() / 2);
             m->active = true;
             snprintf(dev->name, sizeof(dev->name), "USB HID Mouse");
             kprintf("[HID] Bound USB Mouse to Slot %u DCI %u\n", dev->slot_id, m->in_dci);

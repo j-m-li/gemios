@@ -15,20 +15,12 @@ multiboot_header:
 .long MAGIC
 .long FLAGS
 .long CHECKSUM
-       /* header_addr */
-.long   multiboot_header
-        /* load_addr */
-.long   _start
-        /* load_end_addr */
-.long   _kernel_end
-        /* bss_end_addr */
-.long  stack_top 
-        /* entry_addr */
-.long   _start
-.long 0
-.long 640
-.long 480
-.long 32
+# Video mode parameters (flags bit 2 set, bit 16 not set)
+.long 0          # mode_type: 0 = linear graphics
+.long 640        # width
+.long 480        # height
+.long 32         # depth (bpp)
+
 
 .section .bss
 .align 16

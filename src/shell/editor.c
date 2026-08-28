@@ -471,9 +471,15 @@ static void editor_render(void) {
     int cursor_vis_col;
     int scr_x;
     int scr_y;
+    size_t term_w = vga_get_cols();
+    size_t term_h = vga_get_rows();
+    int view_rows = (term_h > 3) ? (int)(term_h - 3) : 1;
+    int shortcut_row = (term_h > 2) ? (int)(term_h - 2) : 1;
+    int status_row = (term_h > 1) ? (int)(term_h - 1) : 0;
+    size_t mod_pos;
 
     /* 1. Header Bar (Row 0) */
-    for (x = 0; x < VGA_WIDTH; x++) {
+    for (x = 0; x < term_w; x++) {
         vga_putc_at(' ', COLOR_HEADER, x, 0);
     }
     vga_puts_at(" GEMIOS EDIT ", COLOR_HEADER, 1, 0);
@@ -482,8 +488,8 @@ static void editor_render(void) {
     snprintf(title, sizeof(title), " File: %s:%s  (UTF-8) ", ed.dev_name, ed.filename);
     vga_puts_at(title, COLOR_HEADER, 15, 0);
 
-    /* 2. Text Editing Area (Rows 1 to 22) */
-    for (r = 0; r < VIEW_ROWS; r++) {
+    /* 2. Text Editing Area (Rows 1 to view_rows) */
+    for (r = 0; r < view_rows; r++) {
         int line_idx;
         int screen_y;
 
@@ -491,7 +497,7 @@ static void editor_render(void) {
         screen_y = 1 + r;
 
         /* Clear row to DOS blue */
-        for (x = 0; x < VGA_WIDTH; x++) {
+        for (x = 0; x < term_w; x++) {
             vga_putc_at(' ', COLOR_TEXT, x, screen_y);
         }
 
@@ -513,11 +519,11 @@ static void editor_render(void) {
             b_idx = 0;
             line_bytes = strlen(line);
 
-            while (b_idx < line_bytes && text_col < VGA_WIDTH - GUTTER_WIDTH + ed.left_col) {
+            while (b_idx < line_bytes && text_col < (int)(term_w - GUTTER_WIDTH) + ed.left_col) {
                 if (line[b_idx] == '\t') {
                     int next_tab;
                     next_tab = text_col + (4 - (text_col % 4));
-                    while (text_col < next_tab && text_col < VGA_WIDTH - GUTTER_WIDTH + ed.left_col) {
+                    while (text_col < next_tab && text_col < (int)(term_w - GUTTER_WIDTH) + ed.left_col) {
                         if (text_col >= ed.left_col) {
                             vga_putc_at(' ', COLOR_TEXT, GUTTER_WIDTH + (text_col - ed.left_col), screen_y);
                         }
@@ -548,31 +554,32 @@ static void editor_render(void) {
         }
     }
 
-    /* 3. Shortcut Bar (Row 23) */
-    for (x = 0; x < VGA_WIDTH; x++) {
-        vga_putc_at(' ', COLOR_STATUS, x, 23);
+    /* 3. Shortcut Bar */
+    for (x = 0; x < term_w; x++) {
+        vga_putc_at(' ', COLOR_STATUS, x, shortcut_row);
     }
-    vga_puts_at(" ^S Save   ^Q Exit   ^N New   ^K DelLine   ESC Exit", COLOR_STATUS, 2, 23);
+    vga_puts_at(" ^S Save   ^Q Exit   ^N New   ^K DelLine   ESC Exit", COLOR_STATUS, 2, shortcut_row);
 
-    /* 4. Status Bar (Row 24) */
-    for (x = 0; x < VGA_WIDTH; x++) {
-        vga_putc_at(' ', COLOR_STATUS, x, 24);
+    /* 4. Status Bar */
+    for (x = 0; x < term_w; x++) {
+        vga_putc_at(' ', COLOR_STATUS, x, status_row);
     }
 
     /* Message or Line Status */
     if (ed.msg[0] != '\0' && (pit_get_ticks() - ed.msg_time < 3000)) {
-        vga_puts_at(ed.msg, ed.msg_color, 2, 24);
+        vga_puts_at(ed.msg, ed.msg_color, 2, status_row);
     } else {
         vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
         snprintf(stat, sizeof(stat), " Line: %d/%d  Col: %d   UTF-8",
                  ed.cur_row + 1, (int)ed.num_lines, vis_col + 1);
-        vga_puts_at(stat, COLOR_STATUS, 2, 24);
+        vga_puts_at(stat, COLOR_STATUS, 2, status_row);
     }
 
+    mod_pos = (term_w > 14) ? (term_w - 14) : 0;
     if (ed.modified) {
-        vga_puts_at(" [Modified] ", COLOR_STATUS_MOD, 66, 24);
+        vga_puts_at(" [Modified] ", COLOR_STATUS_MOD, mod_pos, status_row);
     } else {
-        vga_puts_at("   [Saved]  ", COLOR_STATUS, 66, 24);
+        vga_puts_at("   [Saved]  ", COLOR_STATUS, mod_pos, status_row);
     }
 
     /* 5. Hardware Cursor Placement */
@@ -581,9 +588,9 @@ static void editor_render(void) {
     scr_y = 1 + (ed.cur_row - ed.top_row);
 
     if (scr_x < GUTTER_WIDTH) scr_x = GUTTER_WIDTH;
-    if (scr_x >= VGA_WIDTH) scr_x = VGA_WIDTH - 1;
+    if (scr_x >= (int)term_w) scr_x = (int)term_w - 1;
     if (scr_y < 1) scr_y = 1;
-    if (scr_y > VIEW_ROWS) scr_y = VIEW_ROWS;
+    if (scr_y > view_rows) scr_y = view_rows;
 
     vga_set_cursor(scr_x, scr_y);
 }
@@ -592,6 +599,9 @@ static void editor_adjust_view(void) {
     size_t line_len;
     int vis_col;
     int view_width;
+    size_t term_w = vga_get_cols();
+    size_t term_h = vga_get_rows();
+    int view_rows = (term_h > 3) ? (int)(term_h - 3) : 1;
 
     if (ed.cur_row < 0) ed.cur_row = 0;
     if (ed.cur_row >= (int)ed.num_lines) ed.cur_row = (int)ed.num_lines - 1;
@@ -604,13 +614,14 @@ static void editor_adjust_view(void) {
     if (ed.cur_row < ed.top_row) {
         ed.top_row = ed.cur_row;
     }
-    if (ed.cur_row >= ed.top_row + VIEW_ROWS) {
-        ed.top_row = ed.cur_row - VIEW_ROWS + 1;
+    if (ed.cur_row >= ed.top_row + view_rows) {
+        ed.top_row = ed.cur_row - view_rows + 1;
     }
 
     /* Adjust horizontal scroll */
     vis_col = utf8_byte_to_column(ed.lines[ed.cur_row], ed.cur_col);
-    view_width = VGA_WIDTH - GUTTER_WIDTH;
+    view_width = (int)term_w - GUTTER_WIDTH;
+    if (view_width < 1) view_width = 1;
 
     if (vis_col < ed.left_col) {
         ed.left_col = vis_col;

@@ -25,49 +25,10 @@
 #include "blockdev.h"
 #include "fat.h"
 #include "acpi.h"
+#include "multiboot.h"
 #include "shell.h"
 #include "io.h"
 
-struct multiboot_info {
-    uint32_t flags;
-    uint32_t mem_lower;
-    uint32_t mem_upper;
-    uint32_t boot_device;
-    uint32_t cmdline;
-    uint32_t mods_count;
-    uint32_t mods_addr;
-    uint32_t syms[4];
-    uint32_t mmap_length;
-    uint32_t mmap_addr;
-
-    uint32_t drives_length;
-    uint32_t drives_addr;
-    uint32_t config_table;
-    uint32_t boot_loader_name;
-    uint32_t apm_table;
-    uint32_t vbe_control_info;
-    uint32_t vbe_mode_info;
-    uint16_t vbe_mode;
-    uint16_t vbe_interface_seg;
-    uint16_t vbe_interface_off;
-    uint16_t vbe_interface_len;
-    uint32_t framebuffer_addr_low;
-    uint32_t framebuffer_addr_hi;
-    uint32_t framebuffer_pitch;
-    uint32_t framebuffer_width;
-    uint32_t framebuffer_height;
-    uint8_t framebuffer_bpp;
-#define MULTIBOOT_FRAMEBUFFER_TYPE_INDEXED 0
-#define MULTIBOOT_FRAMEBUFFER_TYPE_RGB     1
-#define MULTIBOOT_FRAMEBUFFER_TYPE_EGA_TEXT     2
-    uint8_t framebuffer_type;
-    uint8_t framebuffer_red_field_position;/*uint32_t framebuffer_palette_addr;*/
-    uint8_t framebuffer_red_mask_size;
-    uint8_t framebuffer_green_field_position;
-    uint8_t framebuffer_green_mask_size;
-    uint8_t framebuffer_blue_field_position;/*uint16_t framebuffer_palette_num_colors;*/
-    uint8_t framebuffer_blue_mask_size;
-};
 static void usb_worker_task(void *arg) {
     UNUSED(arg);
     while (1) {
@@ -81,12 +42,16 @@ static void usb_worker_task(void *arg) {
 static void telemetry_task(void *arg) {
     char buf[32];
     uint8_t header_color;
+    size_t cols;
+    size_t pos;
 
     UNUSED(arg);
     while (1) {
+        cols = vga_get_cols();
         snprintf(buf, sizeof(buf), "Uptime: %us", pit_get_uptime_sec());
         header_color = vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-        vga_puts_at(buf, header_color, 65, 0);
+        pos = (cols > 16) ? (cols - 16) : 0;
+        vga_puts_at(buf, header_color, pos, 0);
 
         rtos_sleep_ms(1000);
     }
@@ -96,16 +61,25 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     uint32_t mem_kb;
     phys_addr_t heap_mem;
     pci_device_t *xhci_dev;
-    uint32_t framebuffer_palette_addr;
-    uint16_t framebuffer_palette_num_colors;
 
     UNUSED(magic);
 
-    framebuffer_palette_addr = *((uint32_t*)(&mbi->framebuffer_red_field_position));
-    framebuffer_palette_num_colors = *((uint16_t*)(&mbi->framebuffer_blue_field_position));
- 
-   /* 1. Initialize Display and Serial Log */
-    vga_init();
+    /* 1. Initialize Display (Framebuffer / VGA text) and Serial Log */
+    vga_init(mbi);
+
+    if (vga_is_framebuffer()) {
+        uint32_t w, h, bpp;
+        vga_get_resolution(&w, &h, &bpp);
+        kprintf("[Video] Initialized Framebuffer: %ux%u (%u bpp) at %p\n",
+                w, h, bpp, (void*)vga_get_framebuffer_addr());
+    } else {
+        kprintf("[Video] Initialized VGA Text Mode (80x25)\n");
+    }
+
+    if (mbi) {
+        kprintf("[Multiboot] flags=0x%x, mem_lower=%uKB, mem_upper=%uKB\n",
+                mbi->flags, mbi->mem_lower, mbi->mem_upper);
+    }
 
     kprint_color(0x0E, "\n=======================================================\n");
     kprint_color(0x0E, "   GEMIOS - 32-bit x86 Preemptive Real-Time OS          \n");

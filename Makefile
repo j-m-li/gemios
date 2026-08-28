@@ -5,10 +5,10 @@ CFLAGS = -m32 -march=i686 -ffreestanding -fno-pic -fno-pie \
          -fno-stack-protector -fno-builtin -nostdlib -Wall -Wextra \
          -ansi -pedantic -Werror \
          -Wno-unused-parameter -Wno-unused-function -O0 \
-         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell
+         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell -Itools
 CC = ../ccia/ccia-i386
 CFLAGS =  \
-         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell \
+         -Isrc/include -Isrc/include/rtos -Isrc/include/usb -Isrc/include/fs -Isrc/include/shell -Itools \
 	-I../ccia/include -I../ccia/include/riscv32 \
 
 ASFLAGS = -m32
@@ -154,6 +154,9 @@ $(FAT32_IMG): $(MKFS_FAT) $(MCOPY) $(DD)
 
 run: $(KERNEL_ELF) $(DISK_IMG)
 	./run-qemu.sh
+
+run-nographic: $(KERNEL_ELF) $(DISK_IMG)
+	./run-qemu.sh --nographic
 
 run-fat32: $(KERNEL_ELF) $(FAT32_IMG)
 	./run-qemu.sh --fat32
