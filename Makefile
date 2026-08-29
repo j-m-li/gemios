@@ -39,7 +39,7 @@ KERNEL_ELF = $(BUILD_DIR)/gemios.elf
 DISK_IMG = $(BUILD_DIR)/test_disk.img
 FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
-.PHONY: all clean run run-nographic test test-ps2 test-fat32 test-hotplug test-usb-device tools
+.PHONY: all clean run run-nographic test test-ps2 test-fat32 test-hotplug  tools
 .SECONDARY:
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)

@@ -146,17 +146,31 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     pci_init();
     kprintf("[Kernel] Found %u PCI devices\n", (uint32_t)pci_get_device_count());
 
-    xhci_dev = pci_find_class(PCI_CLASS_SERIAL_BUS, PCI_SUBCLASS_USB, PCI_PROGIF_XHCI);
-    if (xhci_dev) {
-        kprintf("[Kernel] Found USB xHCI Controller at %02x:%02x.%u (Vendor=0x%04x Device=0x%04x)\n",
-                xhci_dev->bus, xhci_dev->slot, xhci_dev->func, xhci_dev->vendor_id, xhci_dev->device_id);
+    {
+        size_t dev_idx;
+        bool found_xhci = false;
 
-        if (xhci_init(xhci_dev)) {
-            kprintf("[Kernel] Scanning Root Hub Ports & Enumerating Devices...\n");
-            xhci_scan_ports(xhci_get_controller());
+        for (dev_idx = 0; dev_idx < pci_get_device_count(); dev_idx++) {
+            pci_device_t *pdev = pci_get_device(dev_idx);
+            if (pdev && pdev->class_code == PCI_CLASS_SERIAL_BUS &&
+                pdev->subclass == PCI_SUBCLASS_USB &&
+                pdev->prog_if == PCI_PROGIF_XHCI) {
+
+                kprintf("[Kernel] Found USB xHCI Controller at %02x:%02x.%u (Vendor=0x%04x Device=0x%04x)\n",
+                        pdev->bus, pdev->slot, pdev->func, pdev->vendor_id, pdev->device_id);
+
+                if (xhci_init(pdev)) {
+                    found_xhci = true;
+                    kprintf("[Kernel] Scanning Root Hub Ports on %02x:%02x.%u...\n",
+                            pdev->bus, pdev->slot, pdev->func);
+                    xhci_scan_ports(xhci_get_controller());
+                }
+            }
         }
-    } else {
-        kprint_color(0x4F, "[Kernel] No USB xHCI Controller found on PCI bus!\n");
+
+        if (!found_xhci) {
+            kprint_color(0x4F, "[Kernel] No USB xHCI Controller found or initialized on PCI bus!\n");
+        }
     }
 
     /* 7. Initialize RTOS Preemptive Scheduler and Tasks */

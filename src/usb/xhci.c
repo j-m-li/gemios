@@ -180,21 +180,21 @@ bool xhci_init(pci_device_t *pci_dev) {
     usbcmd &= ~XHCI_CMD_RS;
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, usbcmd);
 
-    for (i = 0; i < 100; i++) {
+    for (i = 0; i < 1000; i++) {
         if (mmio_read32(g_xhci.op_base + XHCI_OP_USBSTS) & XHCI_STS_HCH) break;
-        for (d = 0; d < 1000; d++);
+        timer_delay_ms(1);
     }
 
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, XHCI_CMD_HCRST);
-    for (i = 0; i < 100; i++) {
+    for (i = 0; i < 1000; i++) {
         if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBCMD) & XHCI_CMD_HCRST) == 0) break;
-        for (d = 0; d < 1000; d++);
+        timer_delay_ms(1);
     }
 
     /* Wait for Controller Not Ready (CNR) to clear */
-    for (i = 0; i < 200; i++) {
+    for (i = 0; i < 1000; i++) {
         if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBSTS) & XHCI_STS_CNR) == 0) break;
-        for (d = 0; d < 1000; d++);
+        timer_delay_ms(1);
     }
 
     /* Configure Max Device Slots Enabled */
@@ -248,11 +248,11 @@ bool xhci_init(pci_device_t *pci_dev) {
 
     mmio_write32(g_xhci.op_base + XHCI_OP_USBCMD, XHCI_CMD_RS | XHCI_CMD_INTE);
 
-    for (i = 0; i < 100; i++) {
+    for (i = 0; i < 1000; i++) {
         if ((mmio_read32(g_xhci.op_base + XHCI_OP_USBSTS) & XHCI_STS_HCH) == 0) {
             break;
         }
-        for (d = 0; d < 1000; d++);
+        timer_delay_ms(1);
     }
 
     /* 3. Power on all Root Hub Ports */
