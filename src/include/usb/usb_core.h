@@ -48,6 +48,7 @@ typedef struct usb_device {
 
     uint8_t num_interfaces;
     usb_interface_t interfaces[USB_MAX_INTERFACES];
+    uint8_t max_dci;
 
     char name[48];
     bool active;

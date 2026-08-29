@@ -646,7 +646,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
             mmio_write32(portsc_reg, reset_cmd);
 
             reset_ok = false;
-            for (i = 0; i < 150; i++) {
+            for (i = 0; i < 300; i++) {
                 timer_delay_ms(1);
                 portsc = mmio_read32(portsc_reg);
                 if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
@@ -658,7 +658,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
             /* If normal reset did not enable port, try Warm Port Reset (for SuperSpeed) */
             if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
                 mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
-                for (i = 0; i < 150; i++) {
+                for (i = 0; i < 300; i++) {
                     timer_delay_ms(1);
                     portsc = mmio_read32(portsc_reg);
                     if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
@@ -670,7 +670,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
 
             /* Clear change bits (W1C) */
             mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
-            timer_delay_ms(100); /* Port Reset Recovery delay (100ms for real hardware USB 2.0 drives) */
+            timer_delay_ms(150); /* Port Reset Recovery delay (150ms for real hardware USB 2.0 drives) */
             portsc = mmio_read32(portsc_reg);
         }
 
@@ -726,7 +726,7 @@ void xhci_poll(void) {
                     if (usb_get_device_by_root_port(port_id) == NULL) {
                         kprintf("[xHCI Event] Port %u device connected, scanning...\n", port_id);
                         xhci_unlock();
-                        timer_delay_ms(100); /* 100ms connection debounce & stabilization (USB TATTDB) */
+                        timer_delay_ms(150); /* 150ms connection debounce & stabilization (USB TATTDB) */
                         xhci_scan_ports(&g_xhci);
                         xhci_lock();
                     }

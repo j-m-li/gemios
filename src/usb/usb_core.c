@@ -222,7 +222,7 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     ctrl->dcbaa[2 * slot_id + 1] = 0;
 
     /* 2. Allocate EP0 Transfer Ring */
-    ring_init(&slot->ep_rings[1], XHCI_RING_SIZE);
+    xhci_init_ep_ring(ctrl, slot_id, 1);
 
     /* 3. Prepare Input Context for Address Device (33 entries * 32/64 bytes) */
     input_ctx_size = 33 * xhci_context_size(ctrl);
@@ -237,12 +237,23 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
     /* Slot Context */
     context_entries = 1;
-    is_hub = false; /* Initial */
     slot_ctx->info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) | (context_entries << 27);
-    slot_ctx->info2 = (root_port << 16);
+    slot_ctx->info2 = ((uint32_t)root_port << 16);
 
-    if (parent_hub_slot != 0) {
-        slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
+    /* Parent Hub Slot ID, Port, and TTT are ONLY for Low-Speed & Full-Speed devices
+     * attached to a parent High-Speed Hub (Split Transactions / TT) per xHCI spec 6.2.2.1.
+     * For High-Speed (480 Mbps) or SuperSpeed (5+ Gbps), info3 MUST BE 0.
+     */
+    if (parent_hub_slot != 0 && (speed == USB_SPEED_LOW || speed == USB_SPEED_FULL)) {
+        usb_hub_t *parent_hub = usb_hub_find_by_slot(parent_hub_slot);
+        if (parent_hub && parent_hub->dev && parent_hub->dev->speed == USB_SPEED_HIGH) {
+            uint8_t parent_ttt = parent_hub->ttt;
+            slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8) | ((uint32_t)parent_ttt << 16);
+        } else {
+            slot_ctx->info3 = 0;
+        }
+    } else {
+        slot_ctx->info3 = 0;
     }
 
     /* Default EP0 Max Packet Size */
@@ -255,33 +266,108 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
     /* EP0 Context (DCI 1) */
     ep0_ctx->info1 = (0 << 16); /* Interval = 0 */
-    ep0_ctx->info2 = (3 << 1) | (4 << 3) | (ep0_max_packet << 16); /* CErr=3, EP Type=4 (Control), MaxPacket */
+    ep0_ctx->info2 = (3 << 1) | (4 << 3) | ((uint32_t)ep0_max_packet << 16); /* CErr=3, EP Type=4 (Control), MaxPacket */
     ep0_ctx->tr_dequeue_lo = (uint32_t)slot->ep_rings[1].phys_addr | 1; /* DCS=1 */
     ep0_ctx->tr_dequeue_hi = 0;
     ep0_ctx->tx_info = (8 & 0xFFFF); /* Average TRB length */
 
-    /* 4. Send Address Device command with retry for real hardware devices */
+    dev = NULL;
+
+    /* 4. Send Address Device command (Standard BSR=0) */
     res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, false);
     if (res != 0) {
-        /* If first attempt failed (e.g. device still initializing internal firmware), wait and retry */
-        timer_delay_ms(100);
+        uint8_t new_slot_id;
+
+        /* Real hardware recovery: Many USB 2.0 / 1.1 drives reject initial SET_ADDRESS
+         * or fail with USB Transaction Error (code 4) if queried before internal boot.
+         * We disable the failed slot, wait 200ms for drive stabilization, allocate a fresh slot,
+         * and retry Address Device.
+         */
+        kprintf("[USB] Address Device (BSR=0) failed on Slot %u (err %d), retrying with fresh slot and 200ms delay...\n", slot_id, res);
+
+        xhci_cmd_disable_slot(ctrl, slot_id);
+        ctrl->dcbaa[2 * slot_id] = 0;
+        ctrl->dcbaa[2 * slot_id + 1] = 0;
+        if (slot->dev_ctx) {
+            kfree(slot->dev_ctx);
+            slot->dev_ctx = NULL;
+        }
+        slot->enabled = false;
+        timer_delay_ms(200);
+
+        new_slot_id = 0;
+        if (xhci_cmd_enable_slot(ctrl, &new_slot_id) != 0 || new_slot_id == 0) {
+            kprint_color(0x4F, "[USB] Failed to re-enable slot for Port %u\n", root_port);
+            kfree(input_ctx);
+            return res;
+        }
+
+        slot_id = new_slot_id;
+        slot = &ctrl->slots[slot_id];
+        memset(slot, 0, sizeof(xhci_slot_t));
+
+        slot->enabled = true;
+        slot->slot_id = slot_id;
+        slot->speed = speed;
+        slot->root_port = root_port;
+        slot->parent_hub_slot = parent_hub_slot;
+        slot->parent_port = parent_port;
+        slot->route_string = route_string;
+
+        slot->dev_ctx = kmalloc_aligned(dev_ctx_size, 64);
+        memset(slot->dev_ctx, 0, dev_ctx_size);
+        slot->dev_ctx_phys = (phys_addr_t)slot->dev_ctx;
+        ctrl->dcbaa[2 * slot_id] = (uint32_t)slot->dev_ctx_phys;
+        ctrl->dcbaa[2 * slot_id + 1] = 0;
+
+        xhci_init_ep_ring(ctrl, slot_id, 1);
+
+        memset(input_ctx, 0, input_ctx_size);
+        ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
+        slot_ctx = xhci_get_input_slot_ctx(ctrl, input_ctx);
+        ep0_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, 1);
+
+        ctrl_ctx->add_flags = (1 << 0) | (1 << 1);
+        slot_ctx->info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) | (context_entries << 27);
+        slot_ctx->info2 = ((uint32_t)root_port << 16);
+        if (parent_hub_slot != 0 && (speed == USB_SPEED_LOW || speed == USB_SPEED_FULL)) {
+            usb_hub_t *parent_hub = usb_hub_find_by_slot(parent_hub_slot);
+            if (parent_hub && parent_hub->dev && parent_hub->dev->speed == USB_SPEED_HIGH) {
+                uint8_t parent_ttt = parent_hub->ttt;
+                slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8) | ((uint32_t)parent_ttt << 16);
+            } else {
+                slot_ctx->info3 = 0;
+            }
+        } else {
+            slot_ctx->info3 = 0;
+        }
+
+        ep0_ctx->info1 = (0 << 16);
+        ep0_ctx->info2 = (3 << 1) | (4 << 3) | ((uint32_t)ep0_max_packet << 16);
+        ep0_ctx->tr_dequeue_lo = (uint32_t)slot->ep_rings[1].phys_addr | 1;
+        ep0_ctx->tr_dequeue_hi = 0;
+        ep0_ctx->tx_info = (8 & 0xFFFF);
+
+        timer_delay_ms(50);
         res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, false);
-    }
-    if (res != 0) {
-        kprint_color(0x4F, "[USB] Address Device failed on Slot %u (err %d)\n", slot_id, res);
-        kfree(input_ctx);
-        return res;
+        if (res != 0) {
+            kprint_color(0x4F, "[USB] Retry Address Device failed on Slot %u (err %d)\n", slot_id, res);
+            kfree(input_ctx);
+            return res;
+        }
     }
 
-    dev = usb_create_device(slot_id, speed, root_port);
     if (!dev) {
-        kfree(input_ctx);
-        return -1;
+        dev = usb_create_device(slot_id, speed, root_port);
+        if (!dev) {
+            kfree(input_ctx);
+            return -1;
+        }
+        dev->parent_hub_slot = parent_hub_slot;
+        dev->parent_port = parent_port;
+        dev->route_string = route_string;
+        slot->usb_dev = dev;
     }
-    dev->parent_hub_slot = parent_hub_slot;
-    dev->parent_port = parent_port;
-    dev->route_string = route_string;
-    slot->usb_dev = dev;
 
     /* 5. Get 18-byte Device Descriptor */
     res = usb_get_descriptor(dev, USB_DESC_DEVICE, 0, &dev->dev_desc, sizeof(usb_device_descriptor_t));
@@ -430,14 +516,19 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     }
 
     /* Update context entries in slot context */
+    dev->max_dci = max_dci;
     is_hub = (dev->dev_desc.bDeviceClass == USB_CLASS_HUB) ||
              (dev->num_interfaces > 0 && dev->interfaces[0].interface_class == USB_CLASS_HUB);
 
     slot_ctx->info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) |
                       (is_hub ? (1 << 26) : 0) | (max_dci << 27);
-    slot_ctx->info2 = (root_port << 16);
-    if (parent_hub_slot != 0) {
-        slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
+    slot_ctx->info2 = ((uint32_t)root_port << 16);
+    if (parent_hub_slot != 0 && speed < USB_SPEED_SUPER) {
+        usb_hub_t *parent_hub = usb_hub_find_by_slot(parent_hub_slot);
+        uint8_t parent_ttt = (parent_hub && parent_hub->dev && parent_hub->dev->speed == USB_SPEED_HIGH) ? parent_hub->ttt : 0;
+        slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8) | ((uint32_t)parent_ttt << 16);
+    } else {
+        slot_ctx->info3 = 0;
     }
 
     /* 8. Configure Endpoints */
