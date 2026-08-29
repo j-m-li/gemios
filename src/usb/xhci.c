@@ -332,7 +332,7 @@ static int xhci_submit_cmd(xhci_controller_t *ctrl, xhci_trb_t *cmd_trb, xhci_tr
     result = -100;
     start_time = pit_get_ticks();
     loops = 0;
-    while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++loops < 2000000) {
+    while (rtos_is_running() ? (pit_get_ticks() - start_time < 3000) : (++loops < 50000000)) {
         xhci_trb_t *evt;
         evt = xhci_poll_event(ctrl);
         if (evt) {
@@ -525,7 +525,7 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
     result = -100;
     start_time = pit_get_ticks();
     loops = 0;
-    while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++loops < 2000000) {
+    while (rtos_is_running() ? (pit_get_ticks() - start_time < 3000) : (++loops < 50000000)) {
         xhci_trb_t *evt;
         evt = xhci_poll_event(ctrl);
         if (evt) {
@@ -576,7 +576,7 @@ int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci,
     result = -100;
     start_time = pit_get_ticks();
     bulk_loops = 0;
-    while ((!rtos_is_running() || pit_get_ticks() - start_time < 1000) && ++bulk_loops < 2000000) {
+    while (rtos_is_running() ? (pit_get_ticks() - start_time < 3000) : (++bulk_loops < 50000000)) {
         xhci_trb_t *evt;
         evt = xhci_poll_event(ctrl);
         if (evt) {
@@ -607,6 +607,57 @@ int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep
     return xhci_bulk_transfer(ctrl, slot_id, ep_dci, data, len, true);
 }
 
+bool xhci_reset_root_port(xhci_controller_t *ctrl, uint8_t port) {
+    uintptr_t portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
+    uint32_t portsc = mmio_read32(portsc_reg);
+    uint8_t speed = XHCI_PORTSC_SPEED(portsc);
+    uint32_t reset_cmd;
+    bool reset_ok = false;
+    int i;
+
+    /* Ensure port is powered */
+    if (!(portsc & XHCI_PORTSC_PP)) {
+        mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PP);
+        timer_delay_ms(20);
+        portsc = mmio_read32(portsc_reg);
+    }
+
+    if (!(portsc & XHCI_PORTSC_CCS)) return false;
+
+    if (speed == USB_SPEED_SUPER || speed == USB_SPEED_SUPER_PLUS) {
+        reset_cmd = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR;
+    } else {
+        reset_cmd = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR;
+    }
+    mmio_write32(portsc_reg, reset_cmd);
+
+    for (i = 0; i < 300; i++) {
+        timer_delay_ms(1);
+        portsc = mmio_read32(portsc_reg);
+        if ((portsc & (XHCI_PORTSC_PR | XHCI_PORTSC_WPR)) == 0 && (portsc & XHCI_PORTSC_PED)) {
+            reset_ok = true;
+            break;
+        }
+    }
+
+    if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
+        mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR);
+        for (i = 0; i < 300; i++) {
+            timer_delay_ms(1);
+            portsc = mmio_read32(portsc_reg);
+            if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                reset_ok = true;
+                break;
+            }
+        }
+    }
+
+    /* Clear change bits (W1C) */
+    mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
+    timer_delay_ms(150); /* Port Reset Recovery delay */
+    return reset_ok;
+}
+
 void xhci_scan_ports(xhci_controller_t *ctrl) {
     uint8_t port;
     for (port = 1; port <= ctrl->max_ports; port++) {
@@ -614,7 +665,6 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
         uint32_t portsc;
         uint8_t speed;
         uint8_t slot_id;
-        int i;
 
         portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
         portsc = mmio_read32(portsc_reg);
@@ -639,38 +689,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
 
         /* If port is not enabled, perform Port Reset */
         if (!(portsc & XHCI_PORTSC_PED)) {
-            uint32_t reset_cmd;
-            bool reset_ok;
-
-            reset_cmd = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR;
-            mmio_write32(portsc_reg, reset_cmd);
-
-            reset_ok = false;
-            for (i = 0; i < 300; i++) {
-                timer_delay_ms(1);
-                portsc = mmio_read32(portsc_reg);
-                if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
-                    reset_ok = true;
-                    break;
-                }
-            }
-
-            /* If normal reset did not enable port, try Warm Port Reset (for SuperSpeed) */
-            if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
-                mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
-                for (i = 0; i < 300; i++) {
-                    timer_delay_ms(1);
-                    portsc = mmio_read32(portsc_reg);
-                    if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
-                        reset_ok = true;
-                        break;
-                    }
-                }
-            }
-
-            /* Clear change bits (W1C) */
-            mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
-            timer_delay_ms(150); /* Port Reset Recovery delay */
+            xhci_reset_root_port(ctrl, port);
             portsc = mmio_read32(portsc_reg);
         }
 

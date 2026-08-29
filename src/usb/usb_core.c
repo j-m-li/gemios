@@ -278,12 +278,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     if (res != 0) {
         uint8_t new_slot_id;
 
-        /* Real hardware recovery: Many USB 2.0 / 1.1 drives reject initial SET_ADDRESS
-         * or fail with USB Transaction Error (code 4) if queried before internal boot.
-         * We disable the failed slot, wait 200ms for drive stabilization, allocate a fresh slot,
-         * and retry Address Device.
-         */
-        kprintf("[USB] Address Device (BSR=0) failed on Slot %u (err %d), retrying with fresh slot and 200ms delay...\n", slot_id, res);
+        /* Real hardware recovery: Reset the physical port and retry Address Device */
+        kprintf("[USB] Address Device (BSR=0) failed on Slot %u (err %d), resetting port and retrying...\n", slot_id, res);
 
         xhci_cmd_disable_slot(ctrl, slot_id);
         ctrl->dcbaa[2 * slot_id] = 0;
@@ -293,7 +289,12 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
             slot->dev_ctx = NULL;
         }
         slot->enabled = false;
-        timer_delay_ms(200);
+
+        if (parent_hub_slot == 0) {
+            xhci_reset_root_port(ctrl, root_port);
+        } else {
+            timer_delay_ms(150);
+        }
 
         new_slot_id = 0;
         if (xhci_cmd_enable_slot(ctrl, &new_slot_id) != 0 || new_slot_id == 0) {
@@ -348,12 +349,16 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
         ep0_ctx->tr_dequeue_hi = 0;
         ep0_ctx->tx_info = (8 & 0xFFFF);
 
-        timer_delay_ms(50);
+        timer_delay_ms(100);
         res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, false);
         if (res != 0) {
-            kprint_color(0x4F, "[USB] Retry Address Device failed on Slot %u (err %d)\n", slot_id, res);
-            kfree(input_ctx);
-            return res;
+            /* Try BSR=1 fallback */
+            res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, true);
+            if (res != 0) {
+                kprint_color(0x4F, "[USB] Retry Address Device failed on Slot %u (err %d)\n", slot_id, res);
+                kfree(input_ctx);
+                return res;
+            }
         }
     }
 

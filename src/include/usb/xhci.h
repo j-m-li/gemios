@@ -124,5 +124,6 @@ int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep
 
 /* Root Hub management */
 void xhci_scan_ports(xhci_controller_t *ctrl);
+bool xhci_reset_root_port(xhci_controller_t *ctrl, uint8_t port);
 
 #endif /* GEMIOS_XHCI_H */

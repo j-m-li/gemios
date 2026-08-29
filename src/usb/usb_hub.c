@@ -169,6 +169,10 @@ int usb_hub_init_device(usb_device_t *dev) {
             uint32_t shift;
             uint8_t child_slot;
 
+            if (usb_get_device_by_parent(dev->slot_id, port) != NULL) {
+                continue;
+            }
+
             kprintf("[HUB] Slot %u Port %u: Connected device detected. Resetting port...\n", dev->slot_id, port);
 
             /* Issue Port Reset */

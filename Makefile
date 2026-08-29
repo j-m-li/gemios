@@ -39,7 +39,7 @@ KERNEL_ELF = $(BUILD_DIR)/gemios.elf
 DISK_IMG = $(BUILD_DIR)/test_disk.img
 FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
-.PHONY: all clean run run-nographic test test-ps2 test-fat32 test-hotplug tools
+.PHONY: all clean run run-nographic test test-ps2 test-fat32 test-hotplug test-usb-device tools
 .SECONDARY:
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
@@ -172,6 +172,9 @@ test-fat32: $(KERNEL_ELF) $(FAT32_IMG)
 
 test-hotplug: $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
 	./test-hotplug.sh
+
+test-usb-device: $(KERNEL_ELF) $(DISK_IMG)
+	./test-usb-device.sh
 
 clean:
 	rm -rf $(BUILD_DIR) tools/make tools/as tools/ld tools/dd tools/mkfs.fat tools/mcopy
