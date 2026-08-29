@@ -125,6 +125,25 @@ int usb_hub_init_device(usb_device_t *dev) {
         kfree(input_ctx);
     }
 
+    /* For USB 3.0 SuperSpeed Hubs, send SET_HUB_DEPTH request per USB 3.0 spec 10.14.2.10 */
+    if (hub->is_superspeed) {
+        uint16_t depth = 0;
+        uint32_t r = dev->route_string;
+        while (r != 0) {
+            depth++;
+            r >>= 4;
+        }
+        res = usb_control_msg(dev,
+                              USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_DEVICE,
+                              USB_HUB_REQ_SET_HUB_DEPTH,
+                              depth, 0, NULL, 0);
+        if (res != 0) {
+            kprint_color(0x4F, "[HUB] Set Hub Depth (%u) failed on Slot %u (err %d)\n", depth, dev->slot_id, res);
+        } else {
+            kprintf("[HUB] SuperSpeed Hub Slot %u: Configured Hub Depth = %u\n", dev->slot_id, depth);
+        }
+    }
+
     /* Power on all downstream ports */
     for (port = 1; port <= hub->num_ports; port++) {
         uint16_t feat = hub->is_superspeed ? USB_SS_HUB_FEAT_PORT_POWER : USB_HUB_FEAT_PORT_POWER;
