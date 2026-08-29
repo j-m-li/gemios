@@ -637,40 +637,70 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
 
         kprintf("[xHCI] Port %u: Device detected (PORTSC=0x%08x)\n", port, portsc);
 
-        /* If port is not enabled, perform Port Reset */
+        /* If port is not enabled, check link training and perform Port Reset */
         if (!(portsc & XHCI_PORTSC_PED)) {
             uint32_t reset_cmd;
             bool reset_ok;
+            uint8_t pls;
 
-            reset_cmd = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR;
-            mmio_write32(portsc_reg, reset_cmd);
-
+            /* First check if SuperSpeed hardware link training completes to U0 */
             reset_ok = false;
-            for (i = 0; i < 300; i++) {
-                timer_delay_ms(1);
+            for (i = 0; i < 100; i++) {
                 portsc = mmio_read32(portsc_reg);
-                if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                if (portsc & XHCI_PORTSC_PED) {
                     reset_ok = true;
                     break;
                 }
+                timer_delay_ms(1);
             }
 
-            /* If normal reset did not enable port, try Warm Port Reset (for SuperSpeed) */
-            if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
-                mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
-                for (i = 0; i < 300; i++) {
-                    timer_delay_ms(1);
-                    portsc = mmio_read32(portsc_reg);
-                    if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
-                        reset_ok = true;
-                        break;
+            pls = XHCI_PORTSC_PLS(portsc);
+
+            /* If not enabled yet, determine whether to use Warm Port Reset (SuperSpeed) or Standard Reset (USB2) */
+            if (!reset_ok) {
+                if (pls == XHCI_PLS_RXDETECT || pls == 6 /* Inactive */ || pls == 7 /* Polling */ || pls == 10 /* Compliance */) {
+                    /* SuperSpeed port link issue: issue Warm Port Reset */
+                    mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
+                    for (i = 0; i < 300; i++) {
+                        timer_delay_ms(1);
+                        portsc = mmio_read32(portsc_reg);
+                        if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                            reset_ok = true;
+                            break;
+                        }
+                    }
+                } else {
+                    /* Standard USB 2.0 Port Reset */
+                    reset_cmd = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR;
+                    mmio_write32(portsc_reg, reset_cmd);
+
+                    for (i = 0; i < 300; i++) {
+                        timer_delay_ms(1);
+                        portsc = mmio_read32(portsc_reg);
+                        if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                            reset_ok = true;
+                            break;
+                        }
+                    }
+
+                    /* If normal reset failed, try Warm Port Reset (for SuperSpeed) */
+                    if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
+                        mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
+                        for (i = 0; i < 300; i++) {
+                            timer_delay_ms(1);
+                            portsc = mmio_read32(portsc_reg);
+                            if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
+                                reset_ok = true;
+                                break;
+                            }
+                        }
                     }
                 }
             }
 
             /* Clear change bits (W1C) */
             mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
-            timer_delay_ms(150); /* Port Reset Recovery delay (150ms for real hardware USB 2.0 drives) */
+            timer_delay_ms(150); /* Port Reset Recovery delay */
             portsc = mmio_read32(portsc_reg);
         }
 

@@ -383,13 +383,21 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
             dev->dev_desc.bMaxPacketSize0);
 
     /* If EP0 max packet size is different, update using Evaluate Context */
-    if (dev->dev_desc.bMaxPacketSize0 != ep0_max_packet && dev->dev_desc.bMaxPacketSize0 > 0) {
-        memset(input_ctx, 0, input_ctx_size);
-        ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
-        ep0_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, 1);
-        ctrl_ctx->add_flags = (1 << 1); /* Add EP0 */
-        ep0_ctx->info2 = (3 << 1) | (4 << 3) | (dev->dev_desc.bMaxPacketSize0 << 16);
-        xhci_cmd_evaluate_ctx(ctrl, slot_id, input_ctx);
+    {
+        uint16_t real_ep0_max = dev->dev_desc.bMaxPacketSize0;
+        if (speed >= USB_SPEED_SUPER) {
+            /* In USB 3.0+, bMaxPacketSize0 is exponent (9 represents 2^9 = 512 bytes) */
+            real_ep0_max = (1 << dev->dev_desc.bMaxPacketSize0);
+        }
+        if (real_ep0_max != ep0_max_packet && real_ep0_max > 0) {
+            ep0_max_packet = real_ep0_max;
+            memset(input_ctx, 0, input_ctx_size);
+            ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
+            ep0_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, 1);
+            ctrl_ctx->add_flags = (1 << 1); /* Add EP0 */
+            ep0_ctx->info2 = (3 << 1) | (4 << 3) | ((uint32_t)ep0_max_packet << 16);
+            xhci_cmd_evaluate_ctx(ctrl, slot_id, input_ctx);
+        }
     }
 
     /* 6. Get Configuration Descriptor header to find wTotalLength */
@@ -523,10 +531,14 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     slot_ctx->info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) |
                       (is_hub ? (1 << 26) : 0) | (max_dci << 27);
     slot_ctx->info2 = ((uint32_t)root_port << 16);
-    if (parent_hub_slot != 0 && speed < USB_SPEED_SUPER) {
+    if (parent_hub_slot != 0 && (speed == USB_SPEED_LOW || speed == USB_SPEED_FULL)) {
         usb_hub_t *parent_hub = usb_hub_find_by_slot(parent_hub_slot);
-        uint8_t parent_ttt = (parent_hub && parent_hub->dev && parent_hub->dev->speed == USB_SPEED_HIGH) ? parent_hub->ttt : 0;
-        slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8) | ((uint32_t)parent_ttt << 16);
+        if (parent_hub && parent_hub->dev && parent_hub->dev->speed == USB_SPEED_HIGH) {
+            uint8_t parent_ttt = parent_hub->ttt;
+            slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8) | ((uint32_t)parent_ttt << 16);
+        } else {
+            slot_ctx->info3 = 0;
+        }
     } else {
         slot_ctx->info3 = 0;
     }
