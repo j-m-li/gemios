@@ -15,7 +15,7 @@ struct rsdp_descriptor {
     char oem_id[6];
     uint8_t revision;
     uint32_t rsdt_address;
-} PACKED;
+};
 
 struct rsdp_descriptor20 {
     struct rsdp_descriptor first_part;
@@ -24,7 +24,7 @@ struct rsdp_descriptor20 {
     uint32_t xsdt_address_high;
     uint8_t extended_checksum;
     uint8_t reserved[3];
-} PACKED;
+};
 
 /* Standard ACPI Table Header */
 struct acpi_sdt_header {
@@ -37,7 +37,7 @@ struct acpi_sdt_header {
     uint32_t oem_revision;
     uint32_t creator_id;
     uint32_t creator_revision;
-} PACKED;
+};
 
 /* ACPI Generic Address Structure (GAS) */
 struct acpi_gas {
@@ -47,7 +47,7 @@ struct acpi_gas {
     uint8_t access_size;      /* 1=Byte, 2=Word, 3=Dword, 4=Qword */
     uint32_t address_lo;
     uint32_t address_hi;
-} PACKED;
+};
 
 /* FADT Table (Fixed ACPI Description Table) */
 struct acpi_fadt {
@@ -87,12 +87,14 @@ struct acpi_fadt {
     uint8_t day_alrm;
     uint8_t mon_alrm;
     uint8_t century;
-    uint16_t iapc_boot_arch;
+    uint8_t iapc_boot_arch_lo;
+    uint8_t iapc_boot_arch_hi;
     uint8_t reserved2;
     uint32_t flags;
     struct acpi_gas reset_reg;
     uint8_t reset_value;
-    uint8_t arm_boot_arch;
+    uint8_t arm_boot_arch_lo;
+    uint8_t arm_boot_arch_hi;
     uint8_t fadt_minor_version;
     uint32_t x_firmware_ctrl_lo;
     uint32_t x_firmware_ctrl_hi;
@@ -106,20 +108,20 @@ struct acpi_fadt {
     struct acpi_gas x_pm_tmr_blk;
     struct acpi_gas x_gpe0_blk;
     struct acpi_gas x_gpe1_blk;
-} PACKED;
+};
 
 /* MADT Table (Multiple APIC Description Table) */
 struct acpi_madt {
     struct acpi_sdt_header header;
     uint32_t local_apic_address;
     uint32_t flags;
-} PACKED;
+};
 
 /* MADT Entry Header */
 struct acpi_madt_entry_header {
     uint8_t type;
     uint8_t length;
-} PACKED;
+};
 
 /* Type 0: Processor Local APIC */
 struct acpi_madt_local_apic {
@@ -127,7 +129,7 @@ struct acpi_madt_local_apic {
     uint8_t acpi_processor_id;
     uint8_t apic_id;
     uint32_t flags;
-} PACKED;
+};
 
 /* Type 1: I/O APIC */
 struct acpi_madt_io_apic {
@@ -136,7 +138,7 @@ struct acpi_madt_io_apic {
     uint8_t reserved;
     uint32_t io_apic_address;
     uint32_t global_system_interrupt_base;
-} PACKED;
+};
 
 /* Type 2: Interrupt Source Override */
 struct acpi_madt_interrupt_override {
@@ -145,7 +147,7 @@ struct acpi_madt_interrupt_override {
     uint8_t source;
     uint32_t global_system_interrupt;
     uint16_t flags;
-} PACKED;
+};
 
 /* Type 5: Local APIC Address Override */
 struct acpi_madt_local_apic_override {
@@ -153,7 +155,7 @@ struct acpi_madt_local_apic_override {
     uint16_t reserved;
     uint32_t local_apic_address_low;
     uint32_t local_apic_address_high;
-} PACKED;
+};
 
 /* ACPI Public API */
 struct multiboot_info;

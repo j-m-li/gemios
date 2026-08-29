@@ -47,7 +47,7 @@ struct fat_bpb {
     uint32_t volume_id;
     char     volume_label[11];
     char     fs_type[8];
-} PACKED;
+};
 typedef struct fat_bpb fat_bpb_t;
 
 /* Standard 32-byte FAT Directory Entry */
@@ -64,7 +64,7 @@ struct fat_dir_entry {
     uint16_t wrt_date;
     uint16_t fst_clus_lo;
     uint32_t file_size;
-} PACKED;
+};
 typedef struct fat_dir_entry fat_dir_entry_t;
 
 typedef enum {

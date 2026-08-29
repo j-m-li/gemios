@@ -13,7 +13,7 @@ struct usb_kbd_report {
     uint8_t modifiers; /* [0] LCtrl, [1] LShift, [2] LAlt, [3] LGUI, [4] RCtrl, [5] RShift, [6] RAlt, [7] RGUI */
     uint8_t reserved;
     uint8_t keycodes[6];
-} PACKED;
+};
 typedef struct usb_kbd_report usb_kbd_report_t;
 
 /* HID Boot Mouse Report (3 or 4 bytes) */
@@ -22,7 +22,7 @@ struct usb_mouse_report {
     int8_t  dx;
     int8_t  dy;
     int8_t  dwheel;
-} PACKED;
+};
 typedef struct usb_mouse_report usb_mouse_report_t;
 
 typedef struct usb_hid_kbd {

@@ -14,13 +14,13 @@ struct idt_entry {
     uint8_t  always0;
     uint8_t  flags;
     uint16_t base_high;
-} PACKED;
+};
 
 struct idt_ptr {
     uint16_t limit;
     uint16_t base_low;
     uint16_t base_high;
-} PACKED;
+};
 
 /* Ring 0 Interrupt Stack Frame (56 bytes total) */
 struct registers {

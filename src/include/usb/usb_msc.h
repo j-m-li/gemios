@@ -31,7 +31,7 @@ struct usb_msc_cbw {
     uint8_t  bCBWLUN;
     uint8_t  bCBWCBLength;
     uint8_t  CBWCB[16];
-} PACKED;
+};
 typedef struct usb_msc_cbw usb_msc_cbw_t;
 
 /* Command Status Wrapper (13 bytes) */
@@ -40,7 +40,7 @@ struct usb_msc_csw {
     uint32_t dCSWTag;
     uint32_t dCSWDataResidue;
     uint8_t  bCSWStatus;
-} PACKED;
+};
 typedef struct usb_msc_csw usb_msc_csw_t;
 
 /* SCSI Commands */

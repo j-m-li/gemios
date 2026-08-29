@@ -39,12 +39,13 @@ struct multiboot_mmap_entry {
     uint32_t len_low;
     uint32_t len_high;
     uint32_t type;
-} PACKED;
+};
 
 struct multiboot_color_indexed {
-    uint32_t framebuffer_palette_addr;
+    uint16_t framebuffer_palette_addr_lo;
+    uint16_t framebuffer_palette_addr_hi;
     uint16_t framebuffer_palette_num_colors;
-} PACKED;
+};
 
 struct multiboot_color_rgb {
     uint8_t framebuffer_red_field_position;
@@ -53,7 +54,7 @@ struct multiboot_color_rgb {
     uint8_t framebuffer_green_mask_size;
     uint8_t framebuffer_blue_field_position;
     uint8_t framebuffer_blue_mask_size;
-} PACKED;
+};
 
 /* Multiboot 1 Information Structure passed by the bootloader */
 struct multiboot_info {
@@ -90,7 +91,7 @@ struct multiboot_info {
         struct multiboot_color_indexed indexed;
         struct multiboot_color_rgb rgb;
     } color_info;
-} PACKED;
+};
 
 typedef struct multiboot_info multiboot_info_t;
 

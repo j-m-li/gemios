@@ -103,7 +103,7 @@ struct xhci_trb {
     volatile uint32_t parameter_hi;
     volatile uint32_t status;
     volatile uint32_t control;
-} PACKED;
+};
 typedef struct xhci_trb xhci_trb_t;
 
 /* Event Ring Segment Table Entry (16 bytes) */
@@ -112,7 +112,7 @@ struct xhci_erst_entry {
     uint32_t ring_segment_base_hi;
     uint32_t ring_segment_size;
     uint32_t rsvd;
-} PACKED;
+};
 typedef struct xhci_erst_entry xhci_erst_entry_t;
 
 /* Slot Context (32 bytes) */
@@ -122,7 +122,7 @@ struct xhci_slot_ctx {
     uint32_t info3; /* [0:7] Parent Hub Slot ID, [8:15] Parent Port Num, [16:17] TTT, [18:31] Rsvd/Interrupter Target */
     uint32_t info4; /* [0:7] Device Address, [8:26] Rsvd, [27:31] Slot State */
     uint32_t rsvd[4];
-} PACKED;
+};
 typedef struct xhci_slot_ctx xhci_slot_ctx_t;
 
 /* Endpoint Context (32 bytes) */
@@ -133,7 +133,7 @@ struct xhci_ep_ctx {
     uint32_t tr_dequeue_hi; /* [0:31] TR Dequeue Pointer High */
     uint32_t tx_info; /* [0:15] Average TRB Length, [16:31] Max ESIT Payload Lo */
     uint32_t rsvd[3];
-} PACKED;
+};
 typedef struct xhci_ep_ctx xhci_ep_ctx_t;
 
 /* Input Control Context (32 bytes) */
@@ -141,7 +141,7 @@ struct xhci_input_ctrl_ctx {
     uint32_t drop_flags;
     uint32_t add_flags;
     uint32_t rsvd[6];
-} PACKED;
+};
 typedef struct xhci_input_ctrl_ctx xhci_input_ctrl_ctx_t;
 
 /* Device Context (32 * 32 bytes = 1024 bytes) */

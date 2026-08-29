@@ -61,7 +61,6 @@ typedef int int32_t;
 #define R_386_32   1
 #define R_386_PC32 2
 
-#pragma pack(push, 1)
 typedef struct {
     uint8_t  e_ident[EI_NIDENT];
     uint16_t e_type;
@@ -105,7 +104,6 @@ typedef struct {
     uint32_t r_offset;
     uint32_t r_info;
 } Elf32_Rel;
-#pragma pack(pop)
 
 #define ALIGN_UP(val, align) (((val) + (align) - 1) & ~((align) - 1))
 

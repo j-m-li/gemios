@@ -21,55 +21,6 @@ typedef unsigned int uint32_t;
 
 #define SECTOR_SIZE 512
 
-#pragma pack(push, 1)
-struct fat_bpb {
-    uint8_t  jmp_boot[3];
-    char     oem_name[8];
-    uint16_t bytes_per_sec;
-    uint8_t  sec_per_clus;
-    uint16_t rsvd_sec_cnt;
-    uint8_t  num_fats;
-    uint16_t root_ent_cnt;
-    uint16_t tot_sec_16;
-    uint8_t  media;
-    uint16_t fat_sz_16;
-    uint16_t sec_per_trk;
-    uint16_t num_heads;
-    uint32_t hidd_sec;
-    uint32_t tot_sec_32;
-
-    union {
-        struct {
-            uint8_t  drv_num;
-            uint8_t  reserved1;
-            uint8_t  boot_sig;
-            uint32_t vol_id;
-            char     vol_lab[11];
-            char     fil_sys_type[8];
-            uint8_t  boot_code[448];
-            uint16_t signature;
-        } fat16;
-
-        struct {
-            uint32_t fat_sz_32;
-            uint16_t ext_flags;
-            uint16_t fs_ver;
-            uint32_t root_clus;
-            uint16_t fs_info;
-            uint16_t bk_boot_sec;
-            uint8_t  reserved[12];
-            uint8_t  drv_num;
-            uint8_t  reserved1;
-            uint8_t  boot_sig;
-            uint32_t vol_id;
-            char     vol_lab[11];
-            char     fil_sys_type[8];
-            uint8_t  boot_code[420];
-            uint16_t signature;
-        } fat32;
-    } spec;
-};
-
 struct fat_dir_entry {
     char     name[11];
     uint8_t  attr;
@@ -84,7 +35,14 @@ struct fat_dir_entry {
     uint16_t fst_clus_lo;
     uint32_t file_size;
 };
-#pragma pack(pop)
+
+static uint16_t rd_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t rd_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
 
 static void get_dos_time(uint16_t *dos_time, uint16_t *dos_date) {
     time_t t;
@@ -221,7 +179,17 @@ int main(int argc, char **argv) {
     FILE *f_src;
     long src_size;
     uint8_t *src_data;
-    struct fat_bpb bpb;
+    uint8_t boot_sec[SECTOR_SIZE];
+    uint16_t bytes_per_sec;
+    uint8_t sec_per_clus;
+    uint16_t rsvd_sec_cnt;
+    uint8_t num_fats;
+    uint16_t root_ent_cnt;
+    uint16_t tot_sec_16;
+    uint16_t fat_sz_16;
+    uint32_t tot_sec_32;
+    uint32_t fat_sz_32;
+    uint32_t root_clus;
     uint32_t fat_sz;
     uint32_t tot_sec;
     uint32_t root_dir_sec;
@@ -300,25 +268,36 @@ int main(int argc, char **argv) {
 
     /* Read BPB */
     fseek(f_img, 0, SEEK_SET);
-    if (fread(&bpb, 1, sizeof(bpb), f_img) != sizeof(bpb)) {
+    if (fread(boot_sec, 1, SECTOR_SIZE, f_img) != SECTOR_SIZE) {
         perror("fread bpb");
         fclose(f_img);
         if (src_data) free(src_data);
         return 1;
     }
 
-    if (bpb.bytes_per_sec != SECTOR_SIZE) {
-        fprintf(stderr, "Error: Invalid sector size %u\n", bpb.bytes_per_sec);
+    bytes_per_sec = rd_le16(&boot_sec[11]);
+    if (bytes_per_sec != SECTOR_SIZE) {
+        fprintf(stderr, "Error: Invalid sector size %u\n", bytes_per_sec);
         fclose(f_img);
         if (src_data) free(src_data);
         return 1;
     }
 
-    root_dir_sec = ((bpb.root_ent_cnt * 32) + (SECTOR_SIZE - 1)) / SECTOR_SIZE;
-    fat_sz = (bpb.fat_sz_16 != 0) ? bpb.fat_sz_16 : bpb.spec.fat32.fat_sz_32;
-    tot_sec = (bpb.tot_sec_16 != 0) ? bpb.tot_sec_16 : bpb.tot_sec_32;
-    data_sec = tot_sec - (bpb.rsvd_sec_cnt + (bpb.num_fats * fat_sz) + root_dir_sec);
-    total_clusters = data_sec / bpb.sec_per_clus;
+    sec_per_clus = boot_sec[13];
+    rsvd_sec_cnt = rd_le16(&boot_sec[14]);
+    num_fats = boot_sec[16];
+    root_ent_cnt = rd_le16(&boot_sec[17]);
+    tot_sec_16 = rd_le16(&boot_sec[19]);
+    fat_sz_16 = rd_le16(&boot_sec[22]);
+    tot_sec_32 = rd_le32(&boot_sec[32]);
+    fat_sz_32 = rd_le32(&boot_sec[36]);
+    root_clus = rd_le32(&boot_sec[44]);
+
+    root_dir_sec = ((root_ent_cnt * 32) + (SECTOR_SIZE - 1)) / SECTOR_SIZE;
+    fat_sz = (fat_sz_16 != 0) ? fat_sz_16 : fat_sz_32;
+    tot_sec = (tot_sec_16 != 0) ? tot_sec_16 : tot_sec_32;
+    data_sec = tot_sec - (rsvd_sec_cnt + (num_fats * fat_sz) + root_dir_sec);
+    total_clusters = data_sec / sec_per_clus;
 
     if (total_clusters < 4085) {
         fat_type = 12;
@@ -328,8 +307,8 @@ int main(int argc, char **argv) {
         fat_type = 32;
     }
 
-    cluster_size = bpb.sec_per_clus * SECTOR_SIZE;
-    first_data_sec = bpb.rsvd_sec_cnt + (bpb.num_fats * fat_sz) + root_dir_sec;
+    cluster_size = sec_per_clus * SECTOR_SIZE;
+    first_data_sec = rsvd_sec_cnt + (num_fats * fat_sz) + root_dir_sec;
 
     /* Read FAT1 into memory */
     fat_bytes = fat_sz * SECTOR_SIZE;
@@ -341,7 +320,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    fseek(f_img, (long)bpb.rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
+    fseek(f_img, (long)rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
     if (fread(fat_buf, 1, fat_bytes, f_img) != fat_bytes) {
         perror("fread fat");
         free(fat_buf);
@@ -383,7 +362,7 @@ int main(int argc, char **argv) {
             size_t bytes_to_copy;
             uint8_t *clus_buf;
 
-            sec_offset = first_data_sec + (c - 2) * bpb.sec_per_clus;
+            sec_offset = first_data_sec + (c - 2) * sec_per_clus;
             data_pos = (long)sec_offset * SECTOR_SIZE;
 
             bytes_to_copy = src_size - (clus_idx * cluster_size);
@@ -406,10 +385,10 @@ int main(int argc, char **argv) {
     }
 
     /* Write updated FAT1 and FAT2 back to disk */
-    fseek(f_img, (long)bpb.rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
+    fseek(f_img, (long)rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
     fwrite(fat_buf, 1, fat_bytes, f_img);
-    if (bpb.num_fats > 1) {
-        fseek(f_img, (long)(bpb.rsvd_sec_cnt + fat_sz) * SECTOR_SIZE, SEEK_SET);
+    if (num_fats > 1) {
+        fseek(f_img, (long)(rsvd_sec_cnt + fat_sz) * SECTOR_SIZE, SEEK_SET);
         fwrite(fat_buf, 1, fat_bytes, f_img);
     }
 
@@ -420,7 +399,7 @@ int main(int argc, char **argv) {
         /* FAT12 / FAT16 Fixed Root Directory */
         size_t root_dir_bytes = root_dir_sec * SECTOR_SIZE;
         uint8_t *root_buf = (uint8_t*)malloc(root_dir_bytes);
-        long root_pos = (long)(bpb.rsvd_sec_cnt + bpb.num_fats * fat_sz) * SECTOR_SIZE;
+        long root_pos = (long)(rsvd_sec_cnt + num_fats * fat_sz) * SECTOR_SIZE;
         struct fat_dir_entry *entries;
         size_t max_entries;
         size_t ent_idx;
@@ -486,7 +465,6 @@ int main(int argc, char **argv) {
         free(root_buf);
     } else {
         /* FAT32 Root Directory (Cluster Chain starting at root_clus) */
-        uint32_t root_clus = bpb.spec.fat32.root_clus;
         uint8_t *clus_buf = (uint8_t*)malloc(cluster_size);
         int entry_written = 0;
         uint32_t cur_clus = root_clus;
@@ -506,7 +484,7 @@ int main(int argc, char **argv) {
             size_t max_entries;
             size_t ent_idx;
 
-            clus_pos = (long)(first_data_sec + (cur_clus - 2) * bpb.sec_per_clus) * SECTOR_SIZE;
+            clus_pos = (long)(first_data_sec + (cur_clus - 2) * sec_per_clus) * SECTOR_SIZE;
             fseek(f_img, clus_pos, SEEK_SET);
             fread(clus_buf, 1, cluster_size, f_img);
 
@@ -568,7 +546,7 @@ int main(int argc, char **argv) {
 
                     /* Zero new cluster */
                     memset(clus_buf, 0, cluster_size);
-                    clus_pos = (long)(first_data_sec + (new_c - 2) * bpb.sec_per_clus) * SECTOR_SIZE;
+                    clus_pos = (long)(first_data_sec + (new_c - 2) * sec_per_clus) * SECTOR_SIZE;
                     fseek(f_img, clus_pos, SEEK_SET);
                     fwrite(clus_buf, 1, cluster_size, f_img);
 

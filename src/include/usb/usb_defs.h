@@ -165,7 +165,7 @@ struct usb_setup_packet {
     uint16_t wValue;
     uint16_t wIndex;
     uint16_t wLength;
-} PACKED;
+};
 typedef struct usb_setup_packet usb_setup_packet_t;
 
 /* Standard Device Descriptor (18 bytes) */
@@ -184,7 +184,7 @@ struct usb_device_descriptor {
     uint8_t  iProduct;
     uint8_t  iSerialNumber;
     uint8_t  bNumConfigurations;
-} PACKED;
+};
 typedef struct usb_device_descriptor usb_device_descriptor_t;
 
 /* Standard Configuration Descriptor (9 bytes) */
@@ -197,7 +197,7 @@ struct usb_config_descriptor {
     uint8_t  iConfiguration;
     uint8_t  bmAttributes;
     uint8_t  bMaxPower;
-} PACKED;
+};
 typedef struct usb_config_descriptor usb_config_descriptor_t;
 
 /* Standard Interface Descriptor (9 bytes) */
@@ -211,7 +211,7 @@ struct usb_interface_descriptor {
     uint8_t  bInterfaceSubClass;
     uint8_t  bInterfaceProtocol;
     uint8_t  iInterface;
-} PACKED;
+};
 typedef struct usb_interface_descriptor usb_interface_descriptor_t;
 
 /* Standard Endpoint Descriptor (7 bytes) */
@@ -222,7 +222,7 @@ struct usb_endpoint_descriptor {
     uint8_t  bmAttributes;     /* Bits 0..1: 00=Control, 01=Isoch, 10=Bulk, 11=Interrupt */
     uint16_t wMaxPacketSize;
     uint8_t  bInterval;
-} PACKED;
+};
 typedef struct usb_endpoint_descriptor usb_endpoint_descriptor_t;
 
 /* HID Descriptor */
@@ -233,8 +233,8 @@ struct usb_hid_descriptor {
     uint8_t  bCountryCode;
     uint8_t  bNumDescriptors;
     uint8_t  bReportDescriptorType;
-    uint16_t wReportDescriptorLength;
-} PACKED;
+    uint8_t  wReportDescriptorLength[2];
+};
 typedef struct usb_hid_descriptor usb_hid_descriptor_t;
 
 /* USB 2.0 Hub Descriptor */
@@ -242,11 +242,12 @@ struct usb_hub_descriptor {
     uint8_t  bDescLength;
     uint8_t  bDescriptorType;
     uint8_t  bNbrPorts;
-    uint16_t wHubCharacteristics;
+    uint8_t  wHubCharacteristics_lo;
+    uint8_t  wHubCharacteristics_hi;
     uint8_t  bPwrOn2PwrGood;
     uint8_t  bHubContrCurrent;
     uint8_t  device_removable[8];
-} PACKED;
+};
 typedef struct usb_hub_descriptor usb_hub_descriptor_t;
 
 /* USB 3.0 SuperSpeed Hub Descriptor (12 bytes) */
@@ -254,13 +255,14 @@ struct usb_ss_hub_descriptor {
     uint8_t  bDescLength;
     uint8_t  bDescriptorType;       /* 0x2A */
     uint8_t  bNbrPorts;             /* Number of downstream facing ports */
-    uint16_t wHubCharacteristics;
+    uint8_t  wHubCharacteristics_lo;
+    uint8_t  wHubCharacteristics_hi;
     uint8_t  bPwrOn2PwrGood;        /* Time from port power on to power good in 2ms */
     uint8_t  bHubContrCurrent;      /* Max current in mA */
     uint8_t  bHubHdrDecLat;         /* Hub Packet Header Decode Latency */
     uint16_t wHubDelay;             /* Average Hub delay in ns */
     uint16_t DeviceRemovable;       /* Bitmap of removable devices */
-} PACKED;
+};
 typedef struct usb_ss_hub_descriptor usb_ss_hub_descriptor_t;
 
 const char *usb_speed_to_string(uint8_t speed);

@@ -21,55 +21,17 @@ typedef unsigned int uint32_t;
 
 #define SECTOR_SIZE 512
 
-/* Structure of BPB for FAT12 / FAT16 / FAT32 */
-#pragma pack(push, 1)
-struct fat_bpb {
-    uint8_t  jmp_boot[3];
-    char     oem_name[8];
-    uint16_t bytes_per_sec;
-    uint8_t  sec_per_clus;
-    uint16_t rsvd_sec_cnt;
-    uint8_t  num_fats;
-    uint16_t root_ent_cnt;
-    uint16_t tot_sec_16;
-    uint8_t  media;
-    uint16_t fat_sz_16;
-    uint16_t sec_per_trk;
-    uint16_t num_heads;
-    uint32_t hidd_sec;
-    uint32_t tot_sec_32;
+static void wr_le16(uint8_t *p, uint16_t val) {
+    p[0] = (uint8_t)(val & 0xFF);
+    p[1] = (uint8_t)((val >> 8) & 0xFF);
+}
 
-    union {
-        struct {
-            uint8_t  drv_num;
-            uint8_t  reserved1;
-            uint8_t  boot_sig;
-            uint32_t vol_id;
-            char     vol_lab[11];
-            char     fil_sys_type[8];
-            uint8_t  boot_code[448];
-            uint16_t signature;
-        } fat16;
-
-        struct {
-            uint32_t fat_sz_32;
-            uint16_t ext_flags;
-            uint16_t fs_ver;
-            uint32_t root_clus;
-            uint16_t fs_info;
-            uint16_t bk_boot_sec;
-            uint8_t  reserved[12];
-            uint8_t  drv_num;
-            uint8_t  reserved1;
-            uint8_t  boot_sig;
-            uint32_t vol_id;
-            char     vol_lab[11];
-            char     fil_sys_type[8];
-            uint8_t  boot_code[420];
-            uint16_t signature;
-        } fat32;
-    } spec;
-};
+static void wr_le32(uint8_t *p, uint32_t val) {
+    p[0] = (uint8_t)(val & 0xFF);
+    p[1] = (uint8_t)((val >> 8) & 0xFF);
+    p[2] = (uint8_t)((val >> 16) & 0xFF);
+    p[3] = (uint8_t)((val >> 24) & 0xFF);
+}
 
 struct fat32_fsinfo {
     uint32_t lead_sig;
@@ -95,7 +57,6 @@ struct fat_dir_entry {
     uint16_t fst_clus_lo;
     uint32_t file_size;
 };
-#pragma pack(pop)
 
 static void format_volume_label(const char *src, char *dst) {
     size_t i;
@@ -109,6 +70,59 @@ static void format_volume_label(const char *src, char *dst) {
         char c = src[i];
         if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
         dst[i] = c;
+    }
+}
+
+static void make_bpb(uint8_t *sec, int fat_type, uint32_t total_sectors, uint8_t sec_per_clus,
+                     uint16_t rsvd_sec_cnt, uint16_t root_ent_cnt, uint32_t fat_size,
+                     uint32_t vol_id, const char *vol_name) {
+    memset(sec, 0, SECTOR_SIZE);
+    sec[0] = 0xEB;
+    sec[1] = (fat_type == 32) ? 0x58 : 0x3C;
+    sec[2] = 0x90;
+    memcpy(&sec[3], "GEMIOS  ", 8);
+    wr_le16(&sec[11], SECTOR_SIZE);
+    sec[13] = sec_per_clus;
+    wr_le16(&sec[14], rsvd_sec_cnt);
+    sec[16] = 2; /* num_fats */
+    wr_le16(&sec[17], root_ent_cnt);
+    if (fat_type == 32 || total_sectors >= 65536) {
+        wr_le16(&sec[19], 0);
+        wr_le32(&sec[32], total_sectors);
+    } else {
+        wr_le16(&sec[19], (uint16_t)total_sectors);
+        wr_le32(&sec[32], 0);
+    }
+    sec[21] = 0xF8; /* media */
+    wr_le16(&sec[22], (fat_type == 32) ? 0 : (uint16_t)fat_size);
+    wr_le16(&sec[24], 32); /* sec_per_trk */
+    wr_le16(&sec[26], 64); /* num_heads */
+    wr_le32(&sec[28], 0);  /* hidd_sec */
+
+    if (fat_type == 12 || fat_type == 16) {
+        sec[36] = 0x80; /* drv_num */
+        sec[37] = 0;    /* reserved1 */
+        sec[38] = 0x29; /* boot_sig */
+        wr_le32(&sec[39], vol_id);
+        format_volume_label(vol_name ? vol_name : (fat_type == 12 ? "GEMIOS12" : "GEMIOS16"), (char*)&sec[43]);
+        memcpy(&sec[54], (fat_type == 12 ? "FAT12   " : "FAT16   "), 8);
+        sec[510] = 0x55;
+        sec[511] = 0xAA;
+    } else {
+        wr_le32(&sec[36], fat_size);
+        wr_le16(&sec[40], 0); /* ext_flags */
+        wr_le16(&sec[42], 0); /* fs_ver */
+        wr_le32(&sec[44], 2); /* root_clus */
+        wr_le16(&sec[48], 1); /* fs_info */
+        wr_le16(&sec[50], 6); /* bk_boot_sec */
+        sec[64] = 0x80;       /* drv_num */
+        sec[65] = 0;          /* reserved1 */
+        sec[66] = 0x29;       /* boot_sig */
+        wr_le32(&sec[67], vol_id);
+        format_volume_label(vol_name ? vol_name : "GEMIOS32", (char*)&sec[71]);
+        memcpy(&sec[82], "FAT32   ", 8);
+        sec[510] = 0x55;
+        sec[511] = 0xAA;
     }
 }
 
@@ -136,7 +150,7 @@ int main(int argc, char **argv) {
     uint32_t fat_size;
     uint32_t total_clusters;
     uint32_t vol_id;
-    struct fat_bpb bpb;
+    uint8_t boot_sec[SECTOR_SIZE];
     uint8_t *sector_buf;
 
     fat_type = 0; /* Auto / default */
@@ -225,19 +239,6 @@ int main(int argc, char **argv) {
     }
 
     vol_id = generate_volume_id();
-    memset(&bpb, 0, sizeof(bpb));
-
-    bpb.jmp_boot[0] = 0xEB;
-    bpb.jmp_boot[1] = (fat_type == 32) ? 0x58 : 0x3C;
-    bpb.jmp_boot[2] = 0x90;
-    memcpy(bpb.oem_name, "GEMIOS  ", 8);
-    bpb.bytes_per_sec = SECTOR_SIZE;
-    bpb.sec_per_clus = sec_per_clus;
-    bpb.num_fats = 2;
-    bpb.media = 0xF8;
-    bpb.sec_per_trk = 32;
-    bpb.num_heads = 64;
-    bpb.hidd_sec = 0;
 
     sector_buf = (uint8_t*)calloc(1, SECTOR_SIZE);
     if (!sector_buf) {
@@ -252,15 +253,10 @@ int main(int argc, char **argv) {
         root_ent_cnt = 512;
         root_dir_sectors = (root_ent_cnt * 32 + SECTOR_SIZE - 1) / SECTOR_SIZE;
 
-        bpb.rsvd_sec_cnt = rsvd_sec_cnt;
-        bpb.root_ent_cnt = root_ent_cnt;
-
         if (total_sectors < 65536) {
-            bpb.tot_sec_16 = (uint16_t)total_sectors;
-            bpb.tot_sec_32 = 0;
+            /* tot_sec_16 */
         } else {
-            bpb.tot_sec_16 = 0;
-            bpb.tot_sec_32 = total_sectors;
+            /* tot_sec_32 */
         }
 
         /* Calculate FAT size */
@@ -272,19 +268,13 @@ int main(int argc, char **argv) {
         } else {
             fat_size = ((total_clusters + 2) * 2 + SECTOR_SIZE - 1) / SECTOR_SIZE;
         }
-        bpb.fat_sz_16 = (uint16_t)fat_size;
 
-        bpb.spec.fat16.drv_num = 0x80;
-        bpb.spec.fat16.reserved1 = 0;
-        bpb.spec.fat16.boot_sig = 0x29;
-        bpb.spec.fat16.vol_id = vol_id;
-        format_volume_label(vol_name ? vol_name : (fat_type == 12 ? "GEMIOS12" : "GEMIOS16"), bpb.spec.fat16.vol_lab);
-        memcpy(bpb.spec.fat16.fil_sys_type, (fat_type == 12 ? "FAT12   " : "FAT16   "), 8);
-        bpb.spec.fat16.signature = 0xAA55;
+        make_bpb(boot_sec, fat_type, total_sectors, sec_per_clus, rsvd_sec_cnt,
+                 root_ent_cnt, fat_size, vol_id, vol_name);
 
         /* Write BPB to Sector 0 */
         fseek(fp, 0, SEEK_SET);
-        fwrite(&bpb, 1, sizeof(bpb), fp);
+        fwrite(boot_sec, 1, SECTOR_SIZE, fp);
 
         /* Zero out remaining reserved sectors */
         memset(sector_buf, 0, SECTOR_SIZE);
@@ -355,33 +345,16 @@ int main(int argc, char **argv) {
         root_ent_cnt = 0;
         root_dir_sectors = 0;
 
-        bpb.rsvd_sec_cnt = rsvd_sec_cnt;
-        bpb.root_ent_cnt = 0;
-        bpb.tot_sec_16 = 0;
-        bpb.tot_sec_32 = total_sectors;
-
         data_sec = total_sectors - rsvd_sec_cnt;
         total_clusters = data_sec / sec_per_clus;
         fat_size = ((total_clusters + 2) * 4 + SECTOR_SIZE - 1) / SECTOR_SIZE;
 
-        bpb.fat_sz_16 = 0;
-        bpb.spec.fat32.fat_sz_32 = fat_size;
-        bpb.spec.fat32.ext_flags = 0;
-        bpb.spec.fat32.fs_ver = 0;
-        bpb.spec.fat32.root_clus = 2;
-        bpb.spec.fat32.fs_info = 1;
-        bpb.spec.fat32.bk_boot_sec = 6;
-        bpb.spec.fat32.drv_num = 0x80;
-        bpb.spec.fat32.reserved1 = 0;
-        bpb.spec.fat32.boot_sig = 0x29;
-        bpb.spec.fat32.vol_id = vol_id;
-        format_volume_label(vol_name ? vol_name : "GEMIOS32", bpb.spec.fat32.vol_lab);
-        memcpy(bpb.spec.fat32.fil_sys_type, "FAT32   ", 8);
-        bpb.spec.fat32.signature = 0xAA55;
+        make_bpb(boot_sec, fat_type, total_sectors, sec_per_clus, rsvd_sec_cnt,
+                 root_ent_cnt, fat_size, vol_id, vol_name);
 
         /* Write BPB to Sector 0 */
         fseek(fp, 0, SEEK_SET);
-        fwrite(&bpb, 1, sizeof(bpb), fp);
+        fwrite(boot_sec, 1, SECTOR_SIZE, fp);
 
         /* Write FSInfo Sector (Sector 1) */
         memset(&fsinfo, 0, sizeof(fsinfo));
@@ -395,7 +368,7 @@ int main(int argc, char **argv) {
 
         /* Write Backup BPB to Sector 6 */
         fseek(fp, 6 * SECTOR_SIZE, SEEK_SET);
-        fwrite(&bpb, 1, sizeof(bpb), fp);
+        fwrite(boot_sec, 1, SECTOR_SIZE, fp);
 
         /* Write Backup FSInfo to Sector 7 */
         fseek(fp, 7 * SECTOR_SIZE, SEEK_SET);

@@ -70,7 +70,7 @@ int usb_hub_init_device(usb_device_t *dev) {
             return res;
         }
         hub->num_ports = ss_desc->bNbrPorts;
-        hub->characteristics = ss_desc->wHubCharacteristics;
+        hub->characteristics = (uint16_t)ss_desc->wHubCharacteristics_lo | ((uint16_t)ss_desc->wHubCharacteristics_hi << 8);
         hub->pwr_on_delay_ms = ss_desc->bPwrOn2PwrGood * 2;
         hub->hub_hdr_dec_lat = ss_desc->bHubHdrDecLat;
     } else {
@@ -81,7 +81,7 @@ int usb_hub_init_device(usb_device_t *dev) {
             return res;
         }
         hub->num_ports = usb2_desc->bNbrPorts;
-        hub->characteristics = usb2_desc->wHubCharacteristics;
+        hub->characteristics = (uint16_t)usb2_desc->wHubCharacteristics_lo | ((uint16_t)usb2_desc->wHubCharacteristics_hi << 8);
         hub->pwr_on_delay_ms = usb2_desc->bPwrOn2PwrGood * 2;
         hub->hub_hdr_dec_lat = 0;
     }
