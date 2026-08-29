@@ -208,6 +208,81 @@ cpu_set_msr:
     wrmsr
     ret
 
+.global cpu_has_tsc
+.type cpu_has_tsc, @function
+cpu_has_tsc:
+    pushl %ebx
+    movl $1, %eax
+    cpuid
+    shrl $4, %edx
+    andl $1, %edx
+    movl %edx, %eax
+    popl %ebx
+    ret
+
+.global cpu_rdtsc
+.type cpu_rdtsc, @function
+cpu_rdtsc:
+    movl 4(%esp), %ecx
+    rdtsc
+    testl %ecx, %ecx
+    jz .Lrdtsc_done
+    movl %edx, (%ecx)
+.Lrdtsc_done:
+    ret
+
+.global cpu_rdtsc_lo
+.type cpu_rdtsc_lo, @function
+cpu_rdtsc_lo:
+    rdtsc
+    ret
+
+.global cpu_pause
+.type cpu_pause, @function
+cpu_pause:
+    pause
+    ret
+
+.global cpu_cpuid
+.type cpu_cpuid, @function
+cpu_cpuid:
+    pushl %ebx
+    pushl %esi
+    pushl %edi
+
+    movl 16(%esp), %eax      # leaf
+    movl 20(%esp), %ecx      # subleaf
+    cpuid
+
+    movl 24(%esp), %esi      # out_eax
+    testl %esi, %esi
+    jz .Lcpuid_no_eax
+    movl %eax, (%esi)
+.Lcpuid_no_eax:
+
+    movl 28(%esp), %esi      # out_ebx
+    testl %esi, %esi
+    jz .Lcpuid_no_ebx
+    movl %ebx, (%esi)
+.Lcpuid_no_ebx:
+
+    movl 32(%esp), %esi      # out_ecx
+    testl %esi, %esi
+    jz .Lcpuid_no_ecx
+    movl %ecx, (%esi)
+.Lcpuid_no_ecx:
+
+    movl 36(%esp), %esi      # out_edx
+    testl %esi, %esi
+    jz .Lcpuid_no_edx
+    movl %edx, (%esi)
+.Lcpuid_no_edx:
+
+    popl %edi
+    popl %esi
+    popl %ebx
+    ret
+
 .globl memcpy
 .type memcpy, @function
 memcpy:

@@ -9,6 +9,7 @@
 #include "usb_msc.h"
 #include "heap.h"
 #include "string.h"
+#include "timer.h"
 
 static usb_device_t usb_devices[USB_MAX_DEVICES];
 static size_t usb_device_count = 0;
@@ -94,6 +95,16 @@ usb_device_t *usb_get_device_by_root_port(uint8_t root_port) {
     return NULL;
 }
 
+usb_device_t *usb_get_device_by_parent(uint8_t parent_hub_slot, uint8_t parent_port) {
+    size_t i;
+    for (i = 0; i < USB_MAX_DEVICES; i++) {
+        if (usb_devices[i].active && usb_devices[i].parent_hub_slot == parent_hub_slot && usb_devices[i].parent_port == parent_port) {
+            return &usb_devices[i];
+        }
+    }
+    return NULL;
+}
+
 size_t usb_get_device_count(void) {
     return usb_device_count;
 }
@@ -173,7 +184,12 @@ static void ring_init(xhci_ring_t *ring, uint32_t size) {
 
 int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed, uint8_t root_port, uint8_t parent_hub_slot, uint8_t parent_port, uint32_t route_string) {
     xhci_slot_t *slot;
-    xhci_input_ctx_t *input_ctx;
+    void *input_ctx;
+    size_t input_ctx_size;
+    size_t dev_ctx_size;
+    xhci_input_ctrl_ctx_t *ctrl_ctx;
+    xhci_slot_ctx_t *slot_ctx;
+    xhci_ep_ctx_t *ep0_ctx;
     uint32_t context_entries;
     bool is_hub;
     uint16_t ep0_max_packet;
@@ -197,9 +213,10 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     slot->parent_port = parent_port;
     slot->route_string = route_string;
 
-    /* 1. Allocate Device Context */
-    slot->dev_ctx = (xhci_device_ctx_t*)kmalloc_aligned(sizeof(xhci_device_ctx_t), 64);
-    memset(slot->dev_ctx, 0, sizeof(xhci_device_ctx_t));
+    /* 1. Allocate Device Context (32 entries * 32/64 bytes) */
+    dev_ctx_size = 32 * xhci_context_size(ctrl);
+    slot->dev_ctx = kmalloc_aligned(dev_ctx_size, 64);
+    memset(slot->dev_ctx, 0, dev_ctx_size);
     slot->dev_ctx_phys = (phys_addr_t)slot->dev_ctx;
     ctrl->dcbaa[2 * slot_id] = (uint32_t)slot->dev_ctx_phys;
     ctrl->dcbaa[2 * slot_id + 1] = 0;
@@ -207,20 +224,25 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     /* 2. Allocate EP0 Transfer Ring */
     ring_init(&slot->ep_rings[1], XHCI_RING_SIZE);
 
-    /* 3. Prepare Input Context for Address Device */
-    input_ctx = (xhci_input_ctx_t*)kmalloc_aligned(sizeof(xhci_input_ctx_t), 64);
-    memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
+    /* 3. Prepare Input Context for Address Device (33 entries * 32/64 bytes) */
+    input_ctx_size = 33 * xhci_context_size(ctrl);
+    input_ctx = kmalloc_aligned(input_ctx_size, 64);
+    memset(input_ctx, 0, input_ctx_size);
 
-    input_ctx->ctrl.add_flags = (1 << 0) | (1 << 1); /* Add Slot Context and EP0 Context */
+    ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
+    slot_ctx = xhci_get_input_slot_ctx(ctrl, input_ctx);
+    ep0_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, 1);
+
+    ctrl_ctx->add_flags = (1 << 0) | (1 << 1); /* Add Slot Context and EP0 Context */
 
     /* Slot Context */
     context_entries = 1;
     is_hub = false; /* Initial */
-    input_ctx->slot.info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) | (context_entries << 27);
-    input_ctx->slot.info2 = (root_port << 16);
+    slot_ctx->info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) | (context_entries << 27);
+    slot_ctx->info2 = (root_port << 16);
 
     if (parent_hub_slot != 0) {
-        input_ctx->slot.info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
+        slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
     }
 
     /* Default EP0 Max Packet Size */
@@ -231,15 +253,20 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
         ep0_max_packet = 512;
     }
 
-    /* EP0 Context (DCI 1 -> ep[0]) */
-    input_ctx->ep[0].info1 = (0 << 16); /* Interval = 0 */
-    input_ctx->ep[0].info2 = (3 << 1) | (4 << 3) | (ep0_max_packet << 16); /* CErr=3, EP Type=4 (Control), MaxPacket */
-    input_ctx->ep[0].tr_dequeue_lo = (uint32_t)slot->ep_rings[1].phys_addr | 1; /* DCS=1 */
-    input_ctx->ep[0].tr_dequeue_hi = 0;
-    input_ctx->ep[0].tx_info = (8 & 0xFFFF); /* Average TRB length */
+    /* EP0 Context (DCI 1) */
+    ep0_ctx->info1 = (0 << 16); /* Interval = 0 */
+    ep0_ctx->info2 = (3 << 1) | (4 << 3) | (ep0_max_packet << 16); /* CErr=3, EP Type=4 (Control), MaxPacket */
+    ep0_ctx->tr_dequeue_lo = (uint32_t)slot->ep_rings[1].phys_addr | 1; /* DCS=1 */
+    ep0_ctx->tr_dequeue_hi = 0;
+    ep0_ctx->tx_info = (8 & 0xFFFF); /* Average TRB length */
 
-    /* 4. Send Address Device command */
+    /* 4. Send Address Device command with retry for real hardware devices */
     res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, false);
+    if (res != 0) {
+        /* If first attempt failed (e.g. device still initializing internal firmware), wait and retry */
+        timer_delay_ms(100);
+        res = xhci_cmd_address_device(ctrl, slot_id, input_ctx, false);
+    }
     if (res != 0) {
         kprint_color(0x4F, "[USB] Address Device failed on Slot %u (err %d)\n", slot_id, res);
         kfree(input_ctx);
@@ -271,9 +298,11 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
     /* If EP0 max packet size is different, update using Evaluate Context */
     if (dev->dev_desc.bMaxPacketSize0 != ep0_max_packet && dev->dev_desc.bMaxPacketSize0 > 0) {
-        memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
-        input_ctx->ctrl.add_flags = (1 << 1); /* Add EP0 */
-        input_ctx->ep[0].info2 = (3 << 1) | (4 << 3) | (dev->dev_desc.bMaxPacketSize0 << 16);
+        memset(input_ctx, 0, input_ctx_size);
+        ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
+        ep0_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, 1);
+        ctrl_ctx->add_flags = (1 << 1); /* Add EP0 */
+        ep0_ctx->info2 = (3 << 1) | (4 << 3) | (dev->dev_desc.bMaxPacketSize0 << 16);
         xhci_cmd_evaluate_ctx(ctrl, slot_id, input_ctx);
     }
 
@@ -302,8 +331,10 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     cur_iface = NULL;
     max_dci = 1;
 
-    memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
-    input_ctx->ctrl.add_flags = (1 << 0); /* Slot context */
+    memset(input_ctx, 0, input_ctx_size);
+    ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
+    slot_ctx = xhci_get_input_slot_ctx(ctrl, input_ctx);
+    ctrl_ctx->add_flags = (1 << 0); /* Slot context */
 
     while (p < end) {
         uint8_t len;
@@ -341,6 +372,7 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                 uint8_t ep_type;
                 uint8_t xfer_type;
                 uint8_t interval;
+                xhci_ep_ctx_t *ep_ctx;
 
                 ep = &cur_iface->endpoints[cur_iface->num_endpoints++];
                 ep->address = ep_desc->bEndpointAddress;
@@ -359,7 +391,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                 ring_init(&slot->ep_rings[dci], XHCI_RING_SIZE);
 
                 /* Setup Endpoint Context in Input Context */
-                input_ctx->ctrl.add_flags |= (1 << dci);
+                ep_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, dci);
+                ctrl_ctx->add_flags |= (1 << dci);
 
                 ep_type = 0;
                 xfer_type = ep->attributes & 0x03;
@@ -382,11 +415,11 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                     max_burst = p[len + 2]; /* bMaxBurst */
                 }
 
-                input_ctx->ep[dci - 1].info1 = (interval << 16);
-                input_ctx->ep[dci - 1].info2 = (3 << 1) | (ep_type << 3) | ((uint32_t)max_burst << 8) | (ep->max_packet_size << 16);
-                input_ctx->ep[dci - 1].tr_dequeue_lo = (uint32_t)slot->ep_rings[dci].phys_addr | 1;
-                input_ctx->ep[dci - 1].tr_dequeue_hi = 0;
-                input_ctx->ep[dci - 1].tx_info = (ep->max_packet_size & 0xFFFF);
+                ep_ctx->info1 = (interval << 16);
+                ep_ctx->info2 = (3 << 1) | (ep_type << 3) | ((uint32_t)max_burst << 8) | (ep->max_packet_size << 16);
+                ep_ctx->tr_dequeue_lo = (uint32_t)slot->ep_rings[dci].phys_addr | 1;
+                ep_ctx->tr_dequeue_hi = 0;
+                ep_ctx->tx_info = (ep->max_packet_size & 0xFFFF);
 
                 kprintf("[USB]   Endpoint 0x%02x (DCI %u): Type=%u MaxPacket=%u Burst=%u Interval=%u\n",
                         ep->address, dci, ep_type, ep->max_packet_size, max_burst, ep->interval);
@@ -400,11 +433,11 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
     is_hub = (dev->dev_desc.bDeviceClass == USB_CLASS_HUB) ||
              (dev->num_interfaces > 0 && dev->interfaces[0].interface_class == USB_CLASS_HUB);
 
-    input_ctx->slot.info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) |
-                           (is_hub ? (1 << 26) : 0) | (max_dci << 27);
-    input_ctx->slot.info2 = (root_port << 16);
+    slot_ctx->info1 = (route_string & 0xFFFFF) | ((speed & 0x0F) << 20) |
+                      (is_hub ? (1 << 26) : 0) | (max_dci << 27);
+    slot_ctx->info2 = (root_port << 16);
     if (parent_hub_slot != 0) {
-        input_ctx->slot.info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
+        slot_ctx->info3 = (parent_hub_slot & 0xFF) | ((parent_port & 0xFF) << 8);
     }
 
     /* 8. Configure Endpoints */

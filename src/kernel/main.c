@@ -25,6 +25,7 @@
 #include "blockdev.h"
 #include "fat.h"
 #include "acpi.h"
+#include "timer.h"
 #include "apic.h"
 #include "multiboot.h"
 #include "shell.h"
@@ -97,10 +98,11 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
     kprintf("[Kernel] Initializing IDT...\n");
     idt_init();
 
-    /* 3. Detect ACPI and Initialize System Timer */
+    /* 3. Detect ACPI and Initialize Modern Timers (ACPI PM-Timer, TSC) */
     acpi_init(mbi);
+    timer_init();
 
-    /* Initialize PIT 8254 timer (1000 Hz) */
+    /* Initialize legacy PIT (1000 Hz) as baseline/fallback */
     pit_init(1000);
 
     if (apic_init()) {

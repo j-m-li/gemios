@@ -7,7 +7,7 @@
 #include "pci.h"
 #include "io.h"
 #include "vga.h"
-#include "pit.h"
+#include "timer.h"
 #include "string.h"
 
 #include "multiboot.h"
@@ -103,6 +103,28 @@ struct acpi_madt *acpi_get_madt(void) {
 
 uintptr_t acpi_get_lapic_address(void) {
     return g_lapic_addr;
+}
+
+struct acpi_fadt *acpi_get_fadt(void) {
+    return g_fadt;
+}
+
+uint16_t acpi_get_pm_timer_port(void) {
+    if (!g_fadt) return 0;
+    if (g_fadt->pm_tmr_blk != 0) {
+        return (uint16_t)g_fadt->pm_tmr_blk;
+    }
+    if (g_fadt->header.length >= sizeof(struct acpi_fadt)) {
+        if (g_fadt->x_pm_tmr_blk.address_space_id == 1 && g_fadt->x_pm_tmr_blk.address_lo != 0) {
+            return (uint16_t)g_fadt->x_pm_tmr_blk.address_lo;
+        }
+    }
+    return 0;
+}
+
+bool acpi_pm_timer_is_32bit(void) {
+    if (!g_fadt) return false;
+    return (g_fadt->flags & (1 << 8)) != 0;
 }
 
 static struct acpi_fadt *find_fadt(struct acpi_sdt_header *rsdt) {
@@ -329,7 +351,7 @@ void acpi_poweroff(void) {
                     if (inw((uint16_t)g_fadt->pm1a_cnt_blk) & 1) {
                         break;
                     }
-                    pit_delay_ms(1);
+                    timer_delay_ms(1);
                 }
             }
         }
@@ -347,7 +369,7 @@ void acpi_poweroff(void) {
             outw((uint16_t)g_fadt->pm1b_cnt_blk, val_b);
         }
 
-        pit_delay_ms(100);
+        timer_delay_ms(100);
     }
 
     /* Fallback to standard hardware shutdown ports & CPU halt */
@@ -380,11 +402,11 @@ void acpi_reboot(void) {
                 } else {
                     outb(port, val);
                 }
-                pit_delay_ms(50);
+                timer_delay_ms(50);
             } else if (reset->address_space_id == 0) {
                 /* System Memory / MMIO */
                 mmio_write8((uintptr_t)reset->address_lo, val);
-                pit_delay_ms(50);
+                timer_delay_ms(50);
             } else if (reset->address_space_id == 2) {
                 /* PCI Config Space:
                  * bits 0..15: Register offset
@@ -397,18 +419,18 @@ void acpi_reboot(void) {
                 uint8_t dev = (uint8_t)(reset->address_hi & 0x1F);
                 uint8_t bus = (uint8_t)((reset->address_hi >> 16) & 0xFF);
                 pci_write_config8(bus, dev, func, reg, val);
-                pit_delay_ms(50);
+                timer_delay_ms(50);
             }
         }
     }
 
     /* 2. PCI Chipset Reset Port 0xCF9 (Standard for Intel / AMD / VirtualBox / QEMU / Bare Metal) */
     outb(0xCF9, 0x02);
-    pit_delay_ms(2);
+    timer_delay_ms(2);
     outb(0xCF9, 0x06); /* Hard reset */
-    pit_delay_ms(10);
+    timer_delay_ms(10);
     outb(0xCF9, 0x0E); /* Full power cycle reset */
-    pit_delay_ms(50);
+    timer_delay_ms(50);
 
     /* 3. 8042 Keyboard Controller Pulse Reset */
     {
@@ -417,7 +439,7 @@ void acpi_reboot(void) {
             io_wait();
         }
         outb(0x64, 0xFE);
-        pit_delay_ms(50);
+        timer_delay_ms(50);
     }
 
     /* 4. Fallback: CPU Triple Fault */

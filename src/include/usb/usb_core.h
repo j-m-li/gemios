@@ -60,6 +60,7 @@ void usb_remove_device(uint8_t slot_id);
 
 usb_device_t *usb_get_device_by_slot(uint8_t slot_id);
 usb_device_t *usb_get_device_by_root_port(uint8_t root_port);
+usb_device_t *usb_get_device_by_parent(uint8_t parent_hub_slot, uint8_t parent_port);
 size_t usb_get_device_count(void);
 usb_device_t *usb_get_device_by_index(size_t index);
 

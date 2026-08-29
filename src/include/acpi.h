@@ -164,5 +164,8 @@ bool acpi_is_supported(void);
 struct acpi_sdt_header *acpi_find_table(const char *signature);
 struct acpi_madt *acpi_get_madt(void);
 uintptr_t acpi_get_lapic_address(void);
+struct acpi_fadt *acpi_get_fadt(void);
+uint16_t acpi_get_pm_timer_port(void);
+bool acpi_pm_timer_is_32bit(void);
 
 #endif /* GEMIOS_ACPI_H */

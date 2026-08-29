@@ -5,12 +5,11 @@
 
 #include "time.h"
 #include "sched.h"
+#include "timer.h"
 #include "pit.h"
 #include "io.h"
 
 void rtos_sleep_ms(uint32_t ms) {
-    uint32_t i;
-    volatile int d;
     uint32_t ticks;
 
     if (ms == 0) {
@@ -19,10 +18,8 @@ void rtos_sleep_ms(uint32_t ms) {
     }
 
     if (!rtos_is_running()) {
-        /* Pre-scheduler busy wait */
-        for (i = 0; i < ms; i++) {
-            for (d = 0; d < 10000; d++);
-        }
+        /* Pre-scheduler precision hardware delay */
+        timer_delay_ms(ms);
         return;
     }
 
@@ -33,17 +30,13 @@ void rtos_sleep_ms(uint32_t ms) {
 }
 
 void rtos_delay_ticks(uint32_t ticks) {
-    uint32_t i;
-    volatile int d;
     uint32_t flags;
     task_t *cur;
 
     if (ticks == 0) return;
 
     if (!rtos_is_running()) {
-        for (i = 0; i < ticks; i++) {
-            for (d = 0; d < 10000; d++);
-        }
+        timer_delay_ms(rtos_ticks_to_ms(ticks));
         return;
     }
 
@@ -56,9 +49,7 @@ void rtos_delay_ticks(uint32_t ticks) {
         rtos_reschedule();
     } else {
         irq_restore(flags);
-        for (i = 0; i < ticks; i++) {
-            for (d = 0; d < 10000; d++);
-        }
+        timer_delay_ms(rtos_ticks_to_ms(ticks));
     }
 }
 

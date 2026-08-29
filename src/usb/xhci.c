@@ -10,6 +10,7 @@
 #include "heap.h"
 #include "vga.h"
 #include "pit.h"
+#include "timer.h"
 #include "string.h"
 #include "sched.h"
 #include "sync.h"
@@ -100,7 +101,7 @@ static void xhci_bios_handoff(xhci_controller_t *ctrl, uint32_t hcc1) {
                     if ((cap_val & XHCI_LEGSUP_BIOS_OWNED) == 0) {
                         break;
                     }
-                    pit_delay_ms(1);
+                    timer_delay_ms(1);
                 }
 
                 if (cap_val & XHCI_LEGSUP_BIOS_OWNED) {
@@ -265,7 +266,7 @@ bool xhci_init(pci_device_t *pci_dev) {
             mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PP);
         }
     }
-    pit_delay_ms(100); /* 100ms connection debounce & stabilization (USB TATTDB) */
+    timer_delay_ms(100); /* 100ms connection debounce & stabilization (USB TATTDB) */
 
     g_xhci.initialized = true;
     kprintf("[xHCI] Host Controller started successfully.\n");
@@ -383,7 +384,7 @@ int xhci_cmd_disable_slot(xhci_controller_t *ctrl, uint8_t slot_id) {
     return xhci_submit_cmd(ctrl, &trb, NULL);
 }
 
-int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx, bool bsr) {
+int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, void *input_ctx, bool bsr) {
     xhci_trb_t trb;
     memset(&trb, 0, sizeof(trb));
     trb.parameter_lo = (uint32_t)(phys_addr_t)input_ctx;
@@ -392,7 +393,7 @@ int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input
     return xhci_submit_cmd(ctrl, &trb, NULL);
 }
 
-int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx) {
+int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, void *input_ctx) {
     xhci_trb_t trb;
     memset(&trb, 0, sizeof(trb));
     trb.parameter_lo = (uint32_t)(phys_addr_t)input_ctx;
@@ -401,7 +402,7 @@ int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_c
     return xhci_submit_cmd(ctrl, &trb, NULL);
 }
 
-int xhci_cmd_evaluate_ctx(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx) {
+int xhci_cmd_evaluate_ctx(xhci_controller_t *ctrl, uint8_t slot_id, void *input_ctx) {
     xhci_trb_t trb;
     memset(&trb, 0, sizeof(trb));
     trb.parameter_lo = (uint32_t)(phys_addr_t)input_ctx;
@@ -621,7 +622,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
         /* Ensure port is powered */
         if (!(portsc & XHCI_PORTSC_PP)) {
             mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PP);
-            pit_delay_ms(20);
+            timer_delay_ms(20);
             portsc = mmio_read32(portsc_reg);
         }
 
@@ -646,7 +647,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
 
             reset_ok = false;
             for (i = 0; i < 150; i++) {
-                pit_delay_ms(1);
+                timer_delay_ms(1);
                 portsc = mmio_read32(portsc_reg);
                 if ((portsc & XHCI_PORTSC_PR) == 0 && (portsc & XHCI_PORTSC_PED)) {
                     reset_ok = true;
@@ -658,7 +659,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
             if (!reset_ok && (portsc & XHCI_PORTSC_CCS)) {
                 mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_WPR);
                 for (i = 0; i < 150; i++) {
-                    pit_delay_ms(1);
+                    timer_delay_ms(1);
                     portsc = mmio_read32(portsc_reg);
                     if ((portsc & XHCI_PORTSC_WPR) == 0 && (portsc & XHCI_PORTSC_PED)) {
                         reset_ok = true;
@@ -669,7 +670,7 @@ void xhci_scan_ports(xhci_controller_t *ctrl) {
 
             /* Clear change bits (W1C) */
             mmio_write32(portsc_reg, (portsc & XHCI_PORTSC_PRESERVE_MASK) | (portsc & XHCI_PORTSC_W1C_MASK));
-            pit_delay_ms(15); /* Port Reset Recovery delay (TRSTRCY = 10ms - 20ms) */
+            timer_delay_ms(100); /* Port Reset Recovery delay (100ms for real hardware USB 2.0 drives) */
             portsc = mmio_read32(portsc_reg);
         }
 
@@ -725,6 +726,7 @@ void xhci_poll(void) {
                     if (usb_get_device_by_root_port(port_id) == NULL) {
                         kprintf("[xHCI Event] Port %u device connected, scanning...\n", port_id);
                         xhci_unlock();
+                        timer_delay_ms(100); /* 100ms connection debounce & stabilization (USB TATTDB) */
                         xhci_scan_ports(&g_xhci);
                         xhci_lock();
                     }

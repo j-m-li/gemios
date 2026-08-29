@@ -33,7 +33,7 @@ typedef struct xhci_slot {
     uint8_t parent_hub_slot;
     uint8_t parent_port;
     uint32_t route_string;
-    xhci_device_ctx_t *dev_ctx;
+    void *dev_ctx;
     phys_addr_t dev_ctx_phys;
     xhci_ring_t ep_rings[32];
     void *usb_dev;
@@ -74,12 +74,42 @@ bool xhci_init(pci_device_t *pci_dev);
 xhci_controller_t *xhci_get_controller(void);
 void xhci_poll(void);
 
+/* CSZ-aware context accessors */
+static inline size_t xhci_context_size(xhci_controller_t *ctrl) {
+    return ctrl->csz ? 64 : 32;
+}
+
+static inline xhci_input_ctrl_ctx_t *xhci_get_input_ctrl_ctx(xhci_controller_t *ctrl, void *input_ctx) {
+    UNUSED(ctrl);
+    return (xhci_input_ctrl_ctx_t*)input_ctx;
+}
+
+static inline xhci_slot_ctx_t *xhci_get_input_slot_ctx(xhci_controller_t *ctrl, void *input_ctx) {
+    size_t sz = ctrl->csz ? 64 : 32;
+    return (xhci_slot_ctx_t*)((uintptr_t)input_ctx + sz);
+}
+
+static inline xhci_ep_ctx_t *xhci_get_input_ep_ctx(xhci_controller_t *ctrl, void *input_ctx, uint8_t dci) {
+    size_t sz = ctrl->csz ? 64 : 32;
+    return (xhci_ep_ctx_t*)((uintptr_t)input_ctx + ((dci + 1) * sz));
+}
+
+static inline xhci_slot_ctx_t *xhci_get_dev_slot_ctx(xhci_controller_t *ctrl, void *dev_ctx) {
+    UNUSED(ctrl);
+    return (xhci_slot_ctx_t*)dev_ctx;
+}
+
+static inline xhci_ep_ctx_t *xhci_get_dev_ep_ctx(xhci_controller_t *ctrl, void *dev_ctx, uint8_t dci) {
+    size_t sz = ctrl->csz ? 64 : 32;
+    return (xhci_ep_ctx_t*)((uintptr_t)dev_ctx + (dci * sz));
+}
+
 /* xHCI Commands */
 int xhci_cmd_enable_slot(xhci_controller_t *ctrl, uint8_t *slot_id_out);
 int xhci_cmd_disable_slot(xhci_controller_t *ctrl, uint8_t slot_id);
-int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx, bool bsr);
-int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx);
-int xhci_cmd_evaluate_ctx(xhci_controller_t *ctrl, uint8_t slot_id, xhci_input_ctx_t *input_ctx);
+int xhci_cmd_address_device(xhci_controller_t *ctrl, uint8_t slot_id, void *input_ctx, bool bsr);
+int xhci_cmd_configure_ep(xhci_controller_t *ctrl, uint8_t slot_id, void *input_ctx);
+int xhci_cmd_evaluate_ctx(xhci_controller_t *ctrl, uint8_t slot_id, void *input_ctx);
 int xhci_cmd_reset_ep(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_id);
 int xhci_cmd_set_tr_dequeue(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, phys_addr_t tr_dequeue_ptr, uint8_t dcs);
 int xhci_clear_endpoint_stall(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, uint8_t ep_addr);

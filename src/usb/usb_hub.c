@@ -47,7 +47,7 @@ int usb_hub_init_device(usb_device_t *dev) {
     uint8_t port;
     xhci_controller_t *ctrl;
     uint8_t hub_desc_raw[32];
-    xhci_input_ctx_t *input_ctx;
+    void *input_ctx;
 
     if (hub_count >= MAX_HUBS) return -1;
 
@@ -96,14 +96,18 @@ int usb_hub_init_device(usb_device_t *dev) {
     ctrl = xhci_get_controller();
 
     /* Update Slot Context in xHCI with NumberOfPorts and Hub latency via Evaluate Context */
-    input_ctx = (xhci_input_ctx_t*)kmalloc_aligned(sizeof(xhci_input_ctx_t), 64);
+    input_ctx = kmalloc_aligned(33 * xhci_context_size(ctrl), 64);
     if (input_ctx) {
-        memset(input_ctx, 0, sizeof(xhci_input_ctx_t));
-        input_ctx->ctrl.add_flags = (1 << 0); /* Slot Context */
-        input_ctx->slot.info1 = (dev->route_string & 0xFFFFF) | ((dev->speed & 0x0F) << 20) | (1 << 26);
-        input_ctx->slot.info2 = (dev->root_port << 16) | ((uint32_t)hub->num_ports << 24);
+        xhci_input_ctrl_ctx_t *ctrl_ctx;
+        xhci_slot_ctx_t *slot_ctx;
+        memset(input_ctx, 0, 33 * xhci_context_size(ctrl));
+        ctrl_ctx = xhci_get_input_ctrl_ctx(ctrl, input_ctx);
+        slot_ctx = xhci_get_input_slot_ctx(ctrl, input_ctx);
+        ctrl_ctx->add_flags = (1 << 0); /* Slot Context */
+        slot_ctx->info1 = (dev->route_string & 0xFFFFF) | ((dev->speed & 0x0F) << 20) | (1 << 26);
+        slot_ctx->info2 = (dev->root_port << 16) | ((uint32_t)hub->num_ports << 24);
         if (hub->is_superspeed) {
-            input_ctx->slot.info4 = (hub->hub_hdr_dec_lat & 0xFF);
+            slot_ctx->info4 = (hub->hub_hdr_dec_lat & 0xFF);
         }
         xhci_cmd_evaluate_ctx(ctrl, dev->slot_id, input_ctx);
         kfree(input_ctx);
@@ -260,6 +264,10 @@ void usb_hub_poll(void) {
                     uint32_t shift;
                     uint8_t child_slot;
 
+                    if (usb_get_device_by_parent(hub->dev->slot_id, port) != NULL) {
+                        continue;
+                    }
+
                     kprintf("[HUB] Hub Slot %u Port %u: Device attached, resetting...\n", hub->dev->slot_id, port);
                     if (hub->is_superspeed) {
                         int wait_i;
@@ -321,6 +329,16 @@ void usb_hub_poll(void) {
                                          hub->dev->slot_id, port, enum_res);
                             xhci_cmd_disable_slot(ctrl, child_slot);
                         }
+                    }
+                } else {
+                    /* Device disconnected from hub port */
+                    usb_device_t *child = usb_get_device_by_parent(hub->dev->slot_id, port);
+                    if (child) {
+                        uint8_t child_slot = child->slot_id;
+                        kprintf("[HUB] Hub Slot %u Port %u (Slot %u) disconnected\n",
+                                hub->dev->slot_id, port, child_slot);
+                        usb_remove_device(child_slot);
+                        xhci_cmd_disable_slot(ctrl, child_slot);
                     }
                 }
             }

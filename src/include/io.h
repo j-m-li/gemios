@@ -29,6 +29,11 @@ void rtos_start_first_task(uint32_t *stack_ptr);
 void arch_reboot(void);
 void arch_shutdown(void);
 bool cpu_has_apic(void);
+bool cpu_has_tsc(void);
+uint32_t cpu_rdtsc(uint32_t *hi);
+uint32_t cpu_rdtsc_lo(void);
+void cpu_pause(void);
+void cpu_cpuid(uint32_t leaf, uint32_t subleaf, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
 uint32_t cpu_get_msr(uint32_t msr, uint32_t *hi);
 void cpu_set_msr(uint32_t msr, uint32_t lo, uint32_t hi);
 

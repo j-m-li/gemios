@@ -8,7 +8,7 @@
 #include "blockdev.h"
 #include "heap.h"
 #include "string.h"
-#include "pit.h"
+#include "timer.h"
 #include "vga.h"
 
 #define MAX_MSC_DEVS 4
@@ -236,7 +236,7 @@ int usb_msc_read_blocks(usb_msc_dev_t *msc, uint32_t lba, uint32_t count, void *
         for (retries = 0; retries < 3; retries++) {
             res = msc_bot_transfer(msc, cdb, sizeof(cdb), ptr, bytes, true);
             if (res == 0) break;
-            pit_delay_ms(10);
+            timer_delay_ms(10);
         }
 
         if (res != 0) return res;
@@ -283,7 +283,7 @@ int usb_msc_write_blocks(usb_msc_dev_t *msc, uint32_t lba, uint32_t count, const
         for (retries = 0; retries < 3; retries++) {
             res = msc_bot_transfer(msc, cdb, sizeof(cdb), (void*)ptr, bytes, false);
             if (res == 0) break;
-            pit_delay_ms(10);
+            timer_delay_ms(10);
         }
 
         if (res != 0) return res;
@@ -354,7 +354,7 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
     /* 2. Execute SCSI Inquiry with retries */
     for (retries = 0; retries < 3; retries++) {
         if (scsi_inquiry(msc) == 0) break;
-        pit_delay_ms(50);
+        timer_delay_ms(50);
     }
 
     /* 3. Wait for drive ready (Test Unit Ready loop) */
@@ -379,7 +379,7 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
 
             /* Read Sense Data to clear Unit Attention */
             scsi_request_sense(msc, &sense_key, &asc, &ascq);
-            pit_delay_ms(100);
+            timer_delay_ms(100);
         }
 
         if (!is_ready) {
@@ -399,7 +399,7 @@ int usb_msc_init_device(usb_device_t *dev, usb_interface_t *iface) {
                 cap_ok = true;
                 break;
             }
-            pit_delay_ms(100);
+            timer_delay_ms(100);
         }
 
         if (!cap_ok) {

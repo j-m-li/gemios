@@ -5,6 +5,7 @@
 
 #include "apic.h"
 #include "acpi.h"
+#include "timer.h"
 #include "idt.h"
 #include "pic.h"
 #include "pit.h"
@@ -109,28 +110,38 @@ bool apic_init(void) {
     /* Enable APIC via Spurious Interrupt Vector Register (Vector 0xFF + Bit 8 APIC Enable) */
     lapic_write(LAPIC_SVR, 0x1FF);
 
-    /* 5. Calibrate APIC Timer using 10 ms delay */
-    /* Set Timer Divide Configuration to 16 (0x03) */
+    /* 5. Calibrate APIC Timer using modern reference timer (ACPI PM-Timer or Invariant TSC) */
     lapic_write(LAPIC_TIMER_DIV, 0x03);
-
-    /* Set Timer to Masked One-Shot Mode */
     lapic_write(LAPIC_LVT_TIMER, APIC_DISABLE);
     lapic_write(LAPIC_TIMER_INITCNT, 0xFFFFFFFF);
 
-    /* Delay exactly 10 ms using PIT delay */
-    pit_delay_ms(10);
-
-    curr_cnt = lapic_read(LAPIC_TIMER_CURRCNT);
-    ticks_in_10ms = 0xFFFFFFFF - curr_cnt;
-    g_ticks_per_ms = ticks_in_10ms / 10;
+    if (acpi_pm_timer_is_available()) {
+        acpi_pm_timer_delay_ms(10);
+        curr_cnt = lapic_read(LAPIC_TIMER_CURRCNT);
+        ticks_in_10ms = 0xFFFFFFFF - curr_cnt;
+        g_ticks_per_ms = ticks_in_10ms / 10;
+        kprintf("[APIC] Calibrated APIC Timer via ACPI PM-Timer: %u ticks/ms (%u ticks in 10ms)\n",
+                g_ticks_per_ms, ticks_in_10ms);
+    } else if (tsc_is_available()) {
+        tsc_delay_ms(10);
+        curr_cnt = lapic_read(LAPIC_TIMER_CURRCNT);
+        ticks_in_10ms = 0xFFFFFFFF - curr_cnt;
+        g_ticks_per_ms = ticks_in_10ms / 10;
+        kprintf("[APIC] Calibrated APIC Timer via Invariant TSC: %u ticks/ms (%u ticks in 10ms)\n",
+                g_ticks_per_ms, ticks_in_10ms);
+    } else {
+        pit_delay_ms(10);
+        curr_cnt = lapic_read(LAPIC_TIMER_CURRCNT);
+        ticks_in_10ms = 0xFFFFFFFF - curr_cnt;
+        g_ticks_per_ms = ticks_in_10ms / 10;
+        kprintf("[APIC] Calibrated APIC Timer via fallback PIT: %u ticks/ms (%u ticks in 10ms)\n",
+                g_ticks_per_ms, ticks_in_10ms);
+    }
 
     if (g_ticks_per_ms < 1000) {
         /* Fallback calibration if timer did not tick or underflowed */
         g_ticks_per_ms = 100000;
     }
-
-    kprintf("[APIC] Calibrated APIC Timer: %u ticks/ms (%u ticks in 10ms)\n",
-            g_ticks_per_ms, ticks_in_10ms);
 
     /* 6. Mask IRQ0 on legacy 8259 PIC so PIT timer stops interrupting */
     pic_mask_irq(0);
