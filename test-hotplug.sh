@@ -101,7 +101,7 @@ with open(monitor_log, 'w') as mon_out:
     proc.stdin.write('device_add usb-storage,bus=xhci.0,port=4.3,drive=usbstick16,id=usbdisk3\n')
     proc.stdin.flush()
     wait_for_pattern(\"Registered 'usb0'\", 6.0)
-    time.sleep(0.5)
+    time.sleep(1.0)
 
     # 3. Test commands on hotplugged FAT16 USB drive
     type_cmd('storage')
