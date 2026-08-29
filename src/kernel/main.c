@@ -8,7 +8,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "pit.h"
-#include "ps2_kbd.h"
+#include "ps2.h"
 #include "mmu.h"
 #include "heap.h"
 #include "pci.h"
@@ -34,10 +34,11 @@
 static void usb_worker_task(void *arg) {
     UNUSED(arg);
     while (1) {
+        ps2_poll();
         xhci_poll();
         usb_hid_poll();
         usb_hub_poll();
-        rtos_sleep_ms(8); /* 125 Hz USB polling */
+        rtos_sleep_ms(8); /* 125 Hz input / USB polling */
     }
 }
 
@@ -111,8 +112,8 @@ void kmain(uint32_t magic, struct multiboot_info *mbi) {
         kprintf("[Timer] APIC not present, using PIT 8254 Timer (1000 Hz)...\n");
     }
 
-    /* 4. Initialize PS/2 Keyboard Controller */
-    ps2_kbd_init();
+    /* 4. Initialize PS/2 Controller (Keyboard and Mouse) */
+    ps2_init();
 
     /* 4. Initialize Memory Managers */
     {

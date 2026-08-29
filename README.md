@@ -36,10 +36,11 @@ All code is dedicated to the **Public Domain** (UNLICENSE).
    - DCBAA and Device/Input Contexts (64-byte aligned DMA structures).
    - Automatic Root Hub port status monitoring and reset sequencing.
 
-4. **Dual Keyboard & HID Drivers**:
+4. **Dual Keyboard & Mouse HID Drivers**:
    - **USB Keyboard Driver**: Non-blocking asynchronous event handling, boot protocol, modifier keys (Shift, CapsLock), scancode translation.
-   - **PS/2 Keyboard Driver**: 8042 controller configuration on IRQ 1 with scan code set 1 decoding.
+   - **PS/2 Keyboard Driver**: i8042 controller configuration on IRQ 1 with Scan Code Set 1 decoding, LED status management, extended keys, and modifier support.
    - **USB Mouse Driver**: Boot protocol, relative movement tracking, button states (Left, Right, Middle), screen bounds clamping, and live coordinate display.
+   - **PS/2 Mouse Driver**: Dual-channel i8042 auxiliary port on IRQ 12 with standard 3-byte and IntelliMouse 4-byte scroll wheel packet decoding, button detection, and screen bounds clamping.
 
 5. **USB Mass Storage Class (MSC)**:
    - Bulk-Only Transport (BOT) with Command Block Wrapper (CBW) and Command Status Wrapper (CSW).
@@ -121,7 +122,7 @@ To run in headless or terminal-only mode:
 | `mkdir [dev] <dir>` | Create a directory on the FAT filesystem |
 | `rm [-r] [dev] <path>` | Remove files, directories, or wildcards (`rm -r *`) |
 | `edit [dev] <path>` | Fullscreen MS-DOS style UTF-8 text editor |
-| `mouse` | Display live USB mouse coordinates and button state |
+| `mouse` | Display live PS/2 and USB mouse coordinates and button state |
 | `bench` | Run RTOS preemptive context-switching benchmark |
 | `uptime` | Display uptime in seconds, milliseconds, and timer ticks |
 | `clear` | Clear the console screen |

@@ -101,6 +101,10 @@ uint16_t usb_kbd_getchar(void) {
     return c;
 }
 
+bool usb_kbd_is_present(void) {
+    return kbd_count > 0;
+}
+
 static void process_kbd_report(usb_hid_kbd_t *kbd, usb_kbd_report_t *report) {
     bool shift;
     bool ctrl;
@@ -185,6 +189,10 @@ void usb_mouse_get_state(int32_t *x, int32_t *y, uint8_t *buttons) {
         if (y) *y = 0;
         if (buttons) *buttons = 0;
     }
+}
+
+bool usb_mouse_is_present(void) {
+    return mouse_count > 0;
 }
 
 static void submit_kbd_transfer(usb_hid_kbd_t *kbd) {

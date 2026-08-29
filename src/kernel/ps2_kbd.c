@@ -3,29 +3,26 @@
  * GEMIOS Preemptive Real-Time Operating System
  */
 
+#include "ps2.h"
 #include "ps2_kbd.h"
+#include "ps2_mouse.h"
 #include "idt.h"
 #include "pic.h"
 #include "io.h"
 #include "vga.h"
-#include "usb_hid.h"
 #include "string.h"
-
-#define PS2_DATA_PORT    0x60
-#define PS2_STATUS_PORT  0x64
-#define PS2_COMMAND_PORT 0x64
 
 /* US QWERTY Scan Code Set 1 (Normal) */
 static const char ps2_ascii_normal[128] = {
     0,   27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
     '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
-    0,   /* Control */
+    0,   /* Left Control */
     'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
     0,   /* Left Shift */
     '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/',
     0,   /* Right Shift */
     '*',
-    0,   /* Alt */
+    0,   /* Left Alt */
     ' ', /* Space */
     0,   /* Caps lock */
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* F1 - F10 */
@@ -54,13 +51,13 @@ static const char ps2_ascii_normal[128] = {
 static const char ps2_ascii_shift[128] = {
     0,   27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
     '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n',
-    0,   /* Control */
+    0,   /* Left Control */
     'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~',
     0,   /* Left Shift */
     '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?',
     0,   /* Right Shift */
     '*',
-    0,   /* Alt */
+    0,   /* Left Alt */
     ' ', /* Space */
     0,   /* Caps lock */
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* F1 - F10 */
@@ -72,38 +69,49 @@ static const char ps2_ascii_shift[128] = {
     0
 };
 
-static void ps2_wait_write(void) {
-    int timeout;
-    timeout = 50000;
-    while ((inb(PS2_STATUS_PORT) & 0x02) && --timeout) {
-        io_wait();
-    }
-}
-
-static void ps2_wait_read(void) {
-    int timeout;
-    timeout = 50000;
-    while (!(inb(PS2_STATUS_PORT) & 0x01) && --timeout) {
-        io_wait();
-    }
-}
-
 static bool shift_pressed = false;
 static bool ctrl_pressed = false;
+static bool alt_pressed = false;
 static bool caps_lock = false;
+static bool num_lock = true;
+static bool scroll_lock = false;
 static bool extended_code = false;
+static bool g_ps2_kbd_present = false;
 
-static void ps2_keyboard_irq_handler(registers_t *regs) {
-    uint8_t scancode;
+bool ps2_kbd_is_present(void) {
+    return g_ps2_kbd_present;
+}
+
+void ps2_kbd_set_leds(bool scroll, bool num, bool caps) {
+    uint8_t leds;
+    leds = 0;
+    if (scroll) leds |= (1 << 0);
+    if (num)    leds |= (1 << 1);
+    if (caps)   leds |= (1 << 2);
+
+    ps2_wait_write();
+    outb(PS2_DATA_PORT, PS2_KBD_CMD_SET_LEDS);
+    if (ps2_wait_read()) {
+        inb(PS2_DATA_PORT); /* Read ACK */
+        ps2_wait_write();
+        outb(PS2_DATA_PORT, leds);
+        if (ps2_wait_read()) {
+            inb(PS2_DATA_PORT); /* Read ACK */
+        }
+    }
+}
+
+void ps2_keyboard_handle_byte(uint8_t scancode) {
     bool released;
     uint8_t key;
 
-    UNUSED(regs);
-
-    scancode = inb(PS2_DATA_PORT);
-
     if (scancode == 0xE0) {
         extended_code = true;
+        return;
+    }
+
+    /* Handle Pause/Break prefix 0xE1 (ignore sequence) */
+    if (scancode == 0xE1) {
         return;
     }
 
@@ -117,6 +125,11 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
             ctrl_pressed = !released;
             return;
         }
+        if (key == 0x38) {
+            /* Right Alt */
+            alt_pressed = !released;
+            return;
+        }
         if (!released) {
             if (key == 0x48) kbd_push_char(KEY_UP);
             else if (key == 0x50) kbd_push_char(KEY_DOWN);
@@ -127,6 +140,8 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
             else if (key == 0x49) kbd_push_char(KEY_PGUP);
             else if (key == 0x51) kbd_push_char(KEY_PGDN);
             else if (key == 0x53) kbd_push_char(KEY_DELETE);
+            else if (key == 0x1C) kbd_push_char('\n'); /* Keypad Enter */
+            else if (key == 0x35) kbd_push_char('/');  /* Keypad / */
         }
         return;
     }
@@ -134,6 +149,12 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
     if (key == 0x1D) {
         /* Left Ctrl */
         ctrl_pressed = !released;
+        return;
+    }
+
+    if (key == 0x38) {
+        /* Left Alt */
+        alt_pressed = !released;
         return;
     }
 
@@ -146,6 +167,21 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
     if (key == 0x3A && !released) {
         /* Caps Lock toggle */
         caps_lock = !caps_lock;
+        ps2_kbd_set_leds(scroll_lock, num_lock, caps_lock);
+        return;
+    }
+
+    if (key == 0x45 && !released) {
+        /* Num Lock toggle */
+        num_lock = !num_lock;
+        ps2_kbd_set_leds(scroll_lock, num_lock, caps_lock);
+        return;
+    }
+
+    if (key == 0x46 && !released) {
+        /* Scroll Lock toggle */
+        scroll_lock = !scroll_lock;
+        ps2_kbd_set_leds(scroll_lock, num_lock, caps_lock);
         return;
     }
 
@@ -154,6 +190,21 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
         if (key == 0x3C) { kbd_push_char(KEY_F2); return; }
         if (key == 0x3D) { kbd_push_char(KEY_F3); return; }
         if (key == 0x01) { kbd_push_char(KEY_ESC); return; }
+
+        /* Keypad with / without NumLock */
+        if (key == 0x47) { kbd_push_char(num_lock ? '7' : KEY_HOME); return; }
+        if (key == 0x48) { kbd_push_char(num_lock ? '8' : KEY_UP); return; }
+        if (key == 0x49) { kbd_push_char(num_lock ? '9' : KEY_PGUP); return; }
+        if (key == 0x4A) { kbd_push_char('-'); return; }
+        if (key == 0x4B) { kbd_push_char(num_lock ? '4' : KEY_LEFT); return; }
+        if (key == 0x4C) { if (num_lock) kbd_push_char('5'); return; }
+        if (key == 0x4D) { kbd_push_char(num_lock ? '6' : KEY_RIGHT); return; }
+        if (key == 0x4E) { kbd_push_char('+'); return; }
+        if (key == 0x4F) { kbd_push_char(num_lock ? '1' : KEY_END); return; }
+        if (key == 0x50) { kbd_push_char(num_lock ? '2' : KEY_DOWN); return; }
+        if (key == 0x51) { kbd_push_char(num_lock ? '3' : KEY_PGDN); return; }
+        if (key == 0x52) { if (num_lock) kbd_push_char('0'); return; }
+        if (key == 0x53) { kbd_push_char(num_lock ? '.' : KEY_DELETE); return; }
 
         if (key < 128) {
             bool use_shift;
@@ -185,53 +236,49 @@ static void ps2_keyboard_irq_handler(registers_t *regs) {
     }
 }
 
-void ps2_kbd_init(void) {
-    uint8_t config;
+static void ps2_keyboard_irq_handler(registers_t *regs) {
+    uint8_t status;
+    uint8_t data;
 
+    UNUSED(regs);
+
+    while ((status = inb(PS2_STATUS_PORT)) & PS2_STATUS_OUTPUT_FULL) {
+        data = inb(PS2_DATA_PORT);
+
+        if (status & PS2_STATUS_MOUSE_BUFFER_FULL) {
+            /* Byte is from PS/2 mouse */
+            ps2_mouse_handle_byte(data);
+        } else {
+            /* Byte is from PS/2 keyboard */
+            ps2_keyboard_handle_byte(data);
+        }
+    }
+}
+
+void ps2_kbd_init(void) {
     shift_pressed = false;
+    ctrl_pressed = false;
+    alt_pressed = false;
     caps_lock = false;
+    num_lock = true;
+    scroll_lock = false;
     extended_code = false;
 
-    /* Check if PS/2 controller is present (0xFF indicates floating bus) */
-    if (inb(PS2_STATUS_PORT) == 0xFF) {
-        kprintf("[PS/2] No PS/2 controller detected (floating bus).\n");
-        return;
-    }
-
-    /* 1. Flush any pending data in PS/2 buffer */
-    while (inb(PS2_STATUS_PORT) & 0x01) {
-        inb(PS2_DATA_PORT);
-    }
-
-    /* 2. Read Controller Configuration Byte */
+    /* 1. Enable First PS/2 Port (Keyboard) */
     ps2_wait_write();
-    outb(PS2_COMMAND_PORT, 0x20);
-    ps2_wait_read();
-    config = inb(PS2_DATA_PORT);
+    outb(PS2_COMMAND_PORT, PS2_CMD_ENABLE_PORT1);
 
-    /* 3. Enable IRQ1 (bit 0), enable translation (bit 6), enable clock (clear bit 4) */
-    config |= (1 << 0);
-    config &= ~(1 << 4);
-    config |= (1 << 6);
-
-    ps2_wait_write();
-    outb(PS2_COMMAND_PORT, 0x60);
-    ps2_wait_write();
-    outb(PS2_DATA_PORT, config);
-
-    /* 4. Enable First PS/2 Port */
-    ps2_wait_write();
-    outb(PS2_COMMAND_PORT, 0xAE);
-
-    /* 5. Register IRQ1 handler (Vector 33) and unmask IRQ1 in PIC */
+    /* 2. Register IRQ1 handler (Vector 33) and unmask IRQ1 in PIC */
     register_interrupt_handler(33, ps2_keyboard_irq_handler);
     pic_unmask_irq(1);
 
-    /* 6. Enable Keyboard Scanning command (0xF4) */
+    /* 3. Enable Keyboard Scanning command (0xF4) */
     ps2_wait_write();
-    outb(PS2_DATA_PORT, 0xF4);
-    ps2_wait_read();
-    inb(PS2_DATA_PORT); /* Read ACK */
+    outb(PS2_DATA_PORT, PS2_KBD_CMD_ENABLE_SCAN);
+    if (ps2_wait_read()) {
+        inb(PS2_DATA_PORT); /* Read ACK */
+    }
 
+    g_ps2_kbd_present = true;
     kprintf("[PS/2] Initialized PS/2 Keyboard Driver (IRQ1 Enabled)\n");
 }

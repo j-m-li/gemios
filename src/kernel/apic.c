@@ -100,8 +100,8 @@ bool apic_init(void) {
     lapic_write(LAPIC_DFR, 0xFFFFFFFF); /* Flat model */
     lapic_write(LAPIC_LDR, (lapic_read(LAPIC_ID) & 0xFF000000));
     lapic_write(LAPIC_TPR, 0x00);        /* Clear Task Priority (accept all interrupts) */
-    lapic_write(LAPIC_LVT_LINT0, APIC_DISABLE);
-    lapic_write(LAPIC_LVT_LINT1, APIC_DISABLE);
+    lapic_write(LAPIC_LVT_LINT0, 0x00000700); /* ExtINT: route 8259 PIC interrupts to CPU */
+    lapic_write(LAPIC_LVT_LINT1, 0x00000400); /* NMI */
     lapic_write(LAPIC_LVT_ERROR, APIC_DISABLE);
     lapic_write(LAPIC_ESR, 0);
     lapic_write(LAPIC_ESR, 0);

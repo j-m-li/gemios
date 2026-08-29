@@ -59,8 +59,10 @@ void usb_hid_on_transfer_complete(uint8_t slot_id, uint8_t ep_dci, uint32_t stat
 void kbd_push_char(uint16_t key);
 bool usb_kbd_has_char(void);
 uint16_t usb_kbd_getchar(void);
+bool usb_kbd_is_present(void);
 
 /* Mouse interface for system */
 void usb_mouse_get_state(int32_t *x, int32_t *y, uint8_t *buttons);
+bool usb_mouse_is_present(void);
 
 #endif /* GEMIOS_USB_HID_H */

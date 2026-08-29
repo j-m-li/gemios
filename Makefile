@@ -39,7 +39,7 @@ KERNEL_ELF = $(BUILD_DIR)/gemios.elf
 DISK_IMG = $(BUILD_DIR)/test_disk.img
 FAT32_IMG = $(BUILD_DIR)/test_fat32.img
 
-.PHONY: all clean run run-nographic test test-fat32 test-hotplug tools
+.PHONY: all clean run run-nographic test test-ps2 test-fat32 test-hotplug tools
 .SECONDARY:
 
 all: tools $(KERNEL_ELF) $(DISK_IMG) $(FAT32_IMG)
@@ -163,6 +163,9 @@ run-fat32: $(KERNEL_ELF) $(FAT32_IMG)
 
 test: $(KERNEL_ELF) $(DISK_IMG)
 	./test-qemu.sh
+
+test-ps2: $(KERNEL_ELF) $(DISK_IMG)
+	./test-ps2.sh
 
 test-fat32: $(KERNEL_ELF) $(FAT32_IMG)
 	./test-fat32.sh

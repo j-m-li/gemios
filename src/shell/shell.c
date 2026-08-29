@@ -22,6 +22,8 @@
 #include "pit.h"
 #include "string.h"
 #include "acpi.h"
+#include "ps2_mouse.h"
+#include "ps2_kbd.h"
 #include "io.h"
 
 #define CMD_BUFFER_SIZE 256
@@ -85,7 +87,7 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  mkdir [dev] <dir>     - Create a directory in FAT filesystem\n");
     kprintf("  rm [-r] [dev] <path>  - Remove files or directories (e.g. rm -r *)\n");
     kprintf("  edit [dev] <path>     - Fullscreen MS-DOS style UTF-8 text editor\n");
-    kprintf("  mouse                 - Show current USB mouse coordinates\n");
+    kprintf("  mouse                 - Show current mouse coordinates (PS/2 & USB)\n");
     kprintf("  bench                 - Run RTOS context-switch benchmark\n");
     kprintf("  uptime                - Show system uptime\n");
     kprintf("  clear                 - Clear the terminal screen\n");
@@ -736,19 +738,51 @@ static void cmd_mouse(int argc, char **argv) {
     int32_t x;
     int32_t y;
     uint8_t buttons;
+    bool found;
 
     UNUSED(argc);
     UNUSED(argv);
 
-    x = 0;
-    y = 0;
-    buttons = 0;
-    usb_mouse_get_state(&x, &y, &buttons);
-    kprintf("USB Mouse Position: X=%d, Y=%d | Buttons: Left=%s Right=%s Middle=%s\n",
-            x, y,
-            (buttons & 1) ? "Pressed" : "Released",
-            (buttons & 2) ? "Pressed" : "Released",
-            (buttons & 4) ? "Pressed" : "Released");
+    found = false;
+
+    if (ps2_mouse_is_present()) {
+        x = 0;
+        y = 0;
+        buttons = 0;
+        ps2_mouse_get_state(&x, &y, &buttons);
+        kprintf("PS/2 Mouse Position: X=%d, Y=%d | Buttons: Left=%s Right=%s Middle=%s%s\n",
+                x, y,
+                (buttons & 1) ? "Pressed" : "Released",
+                (buttons & 2) ? "Pressed" : "Released",
+                (buttons & 4) ? "Pressed" : "Released",
+                ps2_mouse_has_scroll_wheel() ? " [Wheel Enabled]" : "");
+        found = true;
+    }
+
+    if (usb_mouse_is_present()) {
+        x = 0;
+        y = 0;
+        buttons = 0;
+        usb_mouse_get_state(&x, &y, &buttons);
+        kprintf("USB Mouse Position: X=%d, Y=%d | Buttons: Left=%s Right=%s Middle=%s\n",
+                x, y,
+                (buttons & 1) ? "Pressed" : "Released",
+                (buttons & 2) ? "Pressed" : "Released",
+                (buttons & 4) ? "Pressed" : "Released");
+        found = true;
+    }
+
+    if (!found) {
+        x = 0;
+        y = 0;
+        buttons = 0;
+        usb_mouse_get_state(&x, &y, &buttons);
+        kprintf("USB Mouse Position: X=%d, Y=%d | Buttons: Left=%s Right=%s Middle=%s\n",
+                x, y,
+                (buttons & 1) ? "Pressed" : "Released",
+                (buttons & 2) ? "Pressed" : "Released",
+                (buttons & 4) ? "Pressed" : "Released");
+    }
 }
 
 static volatile uint32_t bench_counter = 0;
