@@ -81,6 +81,7 @@
 #define TRB_IDT                        (1U << 6)
 #define TRB_BSR                        (1U << 9) /* Block Set Address Request */
 #define TRB_DC                         (1U << 9) /* Deconfigure (for Configure EP) */
+#define TRB_SIA                        (1U << 31) /* Start Isoch ASAP */
 
 #define TRB_GET_TYPE(c)                (((c) >> 10) & 0x3F)
 #define TRB_SET_TYPE(t)                (((uint32_t)(t) & 0x3F) << 10)

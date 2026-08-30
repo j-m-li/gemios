@@ -24,6 +24,7 @@ typedef struct usb_endpoint {
 
 typedef struct usb_interface {
     uint8_t interface_number;
+    uint8_t alternate_setting;
     uint8_t interface_class;
     uint8_t interface_subclass;
     uint8_t interface_protocol;

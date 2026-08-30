@@ -41,7 +41,15 @@ echo "   - Devices:         USB Keyboard, USB Mouse, USB Storage, USB Hub"
 echo "   - Downstream:      Secondary USB Mouse on USB Hub"
 echo "=========================================================="
 
-    echo -device usb-host,vendorid=0x2109,productid=0x0813,bus=xhci.0,port=2
+# Determine audio options: physical USB passthrough (default if root/0d8c) or emulated UAC with host sound backend
+AUDIO_ARGS=()
+if [ "$EUID" -eq 0 ] && lsusb | grep -q "0d8c:0014"; then
+    AUDIO_ARGS+=("-device" "usb-host,vendorid=0x0d8c,productid=0x0014,bus=xhci.0,port=2")
+else
+    # Use PulseAudio / PipeWire host audio backend for emulated USB Audio
+    AUDIO_ARGS+=("-audiodev" "pa,id=snd0" "-device" "usb-audio,bus=xhci.0,port=2,audiodev=snd0")
+fi
+
 exec $QEMU -kernel build/gemios.elf -m 256M \
     -vga std \
     $GRAPHICS_FLAG \
@@ -50,6 +58,7 @@ exec $QEMU -kernel build/gemios.elf -m 256M \
     -drive if=none,id=usbstick,format=raw,file=$DISK_FILE \
     -device usb-storage,bus=xhci.0,port=3,drive=usbstick \
     -device usb-hub,bus=xhci.0,port=4 \
+    "${AUDIO_ARGS[@]}" \
     -device usb-hub,bus=xhci.0,port=4.2 \
     -device usb-mouse,bus=xhci.0,port=4.2.1 \
 

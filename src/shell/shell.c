@@ -11,6 +11,7 @@
 #include "usb_hub.h"
 #include "usb_hid.h"
 #include "usb_msc.h"
+#include "usb_audio.h"
 #include "xhci.h"
 #include "blockdev.h"
 #include "fat.h"
@@ -88,6 +89,9 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  cp [-r] [src] <dest>  - Copy files or directories on FAT filesystem\n");
     kprintf("  rm [-r] [dev] <path>  - Remove files or directories (e.g. rm -r *)\n");
     kprintf("  edit [dev] <path>     - Fullscreen MS-DOS style UTF-8 text editor\n");
+    kprintf("  audio [info|vol|mute] - Configure USB Audio (C-Media 0d8c:0014)\n");
+    kprintf("  play [dev] <file.wav> - Play WAV audio file through USB Audio\n");
+    kprintf("  beep [freq] [ms]      - Play a sound tone through USB Audio\n");
     kprintf("  mouse                 - Show current mouse coordinates (PS/2 & USB)\n");
     kprintf("  bench                 - Run RTOS context-switch benchmark\n");
     kprintf("  uptime                - Show system uptime\n");
@@ -905,6 +909,135 @@ static void cmd_rm(int argc, char **argv) {
     }
 }
 
+static void cmd_audio(int argc, char **argv) {
+    usb_audio_device_t *audio;
+    size_t count;
+    size_t i;
+
+    count = usb_audio_get_device_count();
+    if (count == 0) {
+        kprint_color(0x4F, "No USB Audio device detected. (Plug in a USB Audio adapter like 0d8c:0014)\n");
+        return;
+    }
+
+    audio = usb_audio_get_default();
+    if (!audio) {
+        kprint_color(0x4F, "No active USB Audio device.\n");
+        return;
+    }
+
+    if (argc < 2 || strcmp(argv[1], "info") == 0 || strcmp(argv[1], "status") == 0) {
+        kprintf("\n================ USB Audio Devices (%u) ================\n", (uint32_t)count);
+        for (i = 0; i < count; i++) {
+            usb_audio_device_t *a = usb_audio_get_device(i);
+            if (!a) continue;
+            kprintf("  Device %u: %s\n", (uint32_t)i, a->dev->name);
+            kprintf("    Slot ID:         %u\n", a->slot_id);
+            kprintf("    Playback Stream: Interface %u (Alt %u), Endpoint 0x%02x (DCI %u)\n",
+                    a->as_out_iface, a->as_out_alt, a->as_out_ep_addr, a->as_out_ep_dci);
+            kprintf("    Sample Rate:     %u Hz\n", a->sample_rate);
+            kprintf("    Channels:        %u (%s), %u-bit PCM\n",
+                    a->channels, (a->channels == 2) ? "Stereo" : "Mono", a->bits_per_sample);
+            kprintf("    Volume:          %u%%\n", a->volume_percent);
+            kprintf("    Mute Status:     %s\n", a->is_muted ? "MUTED" : "UNMUTED");
+            kprintf("    Buffering:       Triple Buffering (3x 40ms Periods, %u B/period)\n", (uint32_t)AUDIO_PERIOD_MAX_BYTES);
+            kprintf("    Queue Status:    %u / 3 periods queued (Active: %s, Underruns: %u)\n",
+                    a->tb.queued_periods, usb_audio_is_playing(a) ? "YES" : "NO", a->tb.underruns);
+        }
+        kprintf("========================================================\n");
+        kprintf("Commands: audio vol <0-100> | audio mute <on|off> | audio stop | play [--bg] <file.wav>\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "vol") == 0 || strcmp(argv[1], "volume") == 0) {
+        uint32_t v;
+        if (argc < 3) {
+            kprintf("Current volume: %u%%\nUsage: audio vol <0-100>\n", audio->volume_percent);
+            return;
+        }
+        v = parse_int(argv[2]);
+        if (v > 100) v = 100;
+        usb_audio_set_volume(audio, (uint8_t)v);
+        kprint_color(0x0A, "Set USB Audio master volume to %u%%\n", v);
+    } else if (strcmp(argv[1], "mute") == 0) {
+        bool m = true;
+        if (argc >= 3 && (strcmp(argv[2], "off") == 0 || strcmp(argv[2], "0") == 0)) {
+            m = false;
+        }
+        usb_audio_set_mute(audio, m);
+        kprint_color(0x0A, "USB Audio %s\n", m ? "MUTED" : "UNMUTED");
+    } else if (strcmp(argv[1], "stop") == 0) {
+        usb_audio_stop_all();
+        kprint_color(0x0A, "Stopped USB Audio playback.\n");
+    } else if (strcmp(argv[1], "tone") == 0 || strcmp(argv[1], "beep") == 0) {
+        uint32_t freq = (argc >= 3) ? parse_int(argv[2]) : 440;
+        uint32_t dur = (argc >= 4) ? parse_int(argv[3]) : 500;
+        kprintf("Playing %u Hz tone for %u ms...\n", freq, dur);
+        usb_audio_play_tone(freq, dur);
+    } else if (strcmp(argv[1], "play") == 0) {
+        if (argc < 3) {
+            kprintf("Usage: audio play [--bg] <file.wav>\n");
+            return;
+        }
+        if (strcmp(argv[2], "--bg") == 0 && argc >= 4) {
+            usb_audio_play_file_async(argv[3]);
+        } else {
+            usb_audio_play_file(argv[2]);
+        }
+    } else {
+        kprintf("Unknown audio command: '%s'. Use 'audio info', 'audio vol', 'audio mute', 'audio stop', 'audio tone', 'play <file.wav>'.\n", argv[1]);
+    }
+}
+
+static void cmd_beep(int argc, char **argv) {
+    uint32_t freq = 440;
+    uint32_t dur = 300;
+    if (argc >= 2) freq = parse_int(argv[1]);
+    if (argc >= 3) dur = parse_int(argv[2]);
+    kprintf("Playing beep tone (%u Hz, %u ms)...\n", freq, dur);
+    usb_audio_play_tone(freq, dur);
+}
+
+static void cmd_play(int argc, char **argv) {
+    const char *dev_name;
+    const char *filename;
+    char full_path[256];
+    bool async_mode = false;
+    int file_arg_idx = 1;
+
+    dev_name = g_shell_dev;
+    if (argc < 2) {
+        kprintf("Usage: play [--bg] [dev] <file.wav>\nExample: play TEST.WAV or play --bg usb0 TEST.WAV\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "--bg") == 0 || strcmp(argv[1], "-b") == 0) {
+        async_mode = true;
+        file_arg_idx = 2;
+    }
+
+    if (file_arg_idx >= argc) {
+        kprintf("Usage: play [--bg] [dev] <file.wav>\n");
+        return;
+    }
+
+    if (file_arg_idx + 1 == argc) {
+        filename = argv[file_arg_idx];
+    } else {
+        dev_name = argv[file_arg_idx];
+        filename = argv[file_arg_idx + 1];
+    }
+
+    shell_build_path(filename, full_path, sizeof(full_path));
+
+    if (async_mode) {
+        kprintf("Starting background playback of '%s' on '%s'...\n", full_path, dev_name);
+        usb_audio_play_file_dev_async(dev_name, full_path);
+    } else {
+        usb_audio_play_file_dev(dev_name, full_path);
+    }
+}
+
 static void cmd_mouse(int argc, char **argv) {
     int32_t x;
     int32_t y;
@@ -1121,6 +1254,9 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "cp") == 0 || strcmp(argv[0], "fatcp") == 0) cmd_cp(argc, argv);
     else if (strcmp(argv[0], "rm") == 0) cmd_rm(argc, argv);
     else if (strcmp(argv[0], "edit") == 0) cmd_edit(argc, argv);
+    else if (strcmp(argv[0], "audio") == 0) cmd_audio(argc, argv);
+    else if (strcmp(argv[0], "play") == 0) cmd_play(argc, argv);
+    else if (strcmp(argv[0], "beep") == 0) cmd_beep(argc, argv);
     else if (strcmp(argv[0], "mouse") == 0) cmd_mouse(argc, argv);
     else if (strcmp(argv[0], "bench") == 0) cmd_bench(argc, argv);
     else if (strcmp(argv[0], "uptime") == 0) cmd_uptime(argc, argv);

@@ -7,6 +7,7 @@
 #include "usb_hub.h"
 #include "usb_hid.h"
 #include "usb_msc.h"
+#include "usb_audio.h"
 #include "heap.h"
 #include "string.h"
 #include "timer.h"
@@ -42,6 +43,7 @@ const char *usb_class_to_string(uint8_t class_code) {
 void usb_core_init(void) {
     memset(usb_devices, 0, sizeof(usb_devices));
     usb_device_count = 0;
+    usb_audio_init();
 }
 
 usb_device_t *usb_create_device(uint8_t slot_id, uint8_t speed, uint8_t root_port) {
@@ -450,14 +452,15 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
             if (dev->num_interfaces < USB_MAX_INTERFACES) {
                 cur_iface = &dev->interfaces[dev->num_interfaces++];
                 cur_iface->interface_number = if_desc->bInterfaceNumber;
+                cur_iface->alternate_setting = if_desc->bAlternateSetting;
                 cur_iface->interface_class = if_desc->bInterfaceClass;
                 cur_iface->interface_subclass = if_desc->bInterfaceSubClass;
                 cur_iface->interface_protocol = if_desc->bInterfaceProtocol;
                 cur_iface->num_endpoints = 0;
 
-                kprintf("[USB] Slot %u: Interface %u Class=0x%02x Sub=0x%02x Proto=0x%02x (%s)\n",
-                        slot_id, cur_iface->interface_number, cur_iface->interface_class,
-                        cur_iface->interface_subclass, cur_iface->interface_protocol,
+                kprintf("[USB] Slot %u: Interface %u (Alt %u) Class=0x%02x Sub=0x%02x Proto=0x%02x (%s)\n",
+                        slot_id, cur_iface->interface_number, cur_iface->alternate_setting,
+                        cur_iface->interface_class, cur_iface->interface_subclass, cur_iface->interface_protocol,
                         usb_class_to_string(cur_iface->interface_class));
             }
         } else if (type == USB_DESC_ENDPOINT && cur_iface) {
@@ -471,6 +474,7 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                 uint8_t ep_type;
                 uint8_t xfer_type;
                 uint8_t interval;
+                uint8_t cerr;
                 xhci_ep_ctx_t *ep_ctx;
 
                 ep = &cur_iface->endpoints[cur_iface->num_endpoints++];
@@ -486,8 +490,8 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
                 if (dci > max_dci) max_dci = dci;
 
-                /* Allocate Transfer Ring for endpoint */
-                ring_init(&slot->ep_rings[dci], XHCI_RING_SIZE);
+                /* Allocate Transfer Ring for endpoint with Link TRB setup */
+                xhci_init_ep_ring(ctrl, slot_id, dci);
 
                 /* Setup Endpoint Context in Input Context */
                 ep_ctx = xhci_get_input_ep_ctx(ctrl, input_ctx, dci);
@@ -504,9 +508,14 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
                 interval = ep->interval;
                 if (speed == USB_SPEED_FULL || speed == USB_SPEED_LOW) {
-                    /* In xHCI interval is encoded as 2^(interval-1)*125us */
-                    /* For FS/LS interrupt, ep->interval is in 1ms frames -> log2(interval) + 3 */
-                    interval = 3; /* ~1ms default */
+                    if (xfer_type == 1) {
+                        /* For FS isochronous: interval = bInterval + 3 (1ms frame -> 8 x 125us = 2^(4-1) -> Interval = 4) */
+                        interval = (ep->interval > 0) ? (ep->interval + 3) : 4;
+                    } else {
+                        /* In xHCI interval is encoded as 2^(interval-1)*125us */
+                        /* For FS/LS interrupt, ep->interval is in 1ms frames -> log2(interval) + 3 */
+                        interval = 3; /* ~1ms default */
+                    }
                 }
 
                 max_burst = 0;
@@ -514,11 +523,15 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                     max_burst = p[len + 2]; /* bMaxBurst */
                 }
 
-                ep_ctx->info1 = (interval << 16);
-                ep_ctx->info2 = (3 << 1) | (ep_type << 3) | ((uint32_t)max_burst << 8) | (ep->max_packet_size << 16);
+                /* For Isochronous endpoints (Type 1 and 5), CErr must be 0 per xHCI spec 4.14.1 */
+                cerr = (xfer_type == 1) ? 0 : 3;
+
+                uint32_t max_esit = (xfer_type == 1) ? ep->max_packet_size : 0;
+                ep_ctx->info1 = (interval << 16) | (((max_esit >> 16) & 0xFF) << 24);
+                ep_ctx->info2 = (cerr << 1) | (ep_type << 3) | ((uint32_t)max_burst << 8) | (ep->max_packet_size << 16);
                 ep_ctx->tr_dequeue_lo = (uint32_t)slot->ep_rings[dci].phys_addr | 1;
                 ep_ctx->tr_dequeue_hi = 0;
-                ep_ctx->tx_info = (ep->max_packet_size & 0xFFFF);
+                ep_ctx->tx_info = (ep->max_packet_size & 0xFFFF) | ((max_esit & 0xFFFF) << 16);
 
                 kprintf("[USB]   Endpoint 0x%02x (DCI %u): Type=%u MaxPacket=%u Burst=%u Interval=%u\n",
                         ep->address, dci, ep_type, ep->max_packet_size, max_burst, ep->interval);
@@ -550,20 +563,25 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
 
     /* 8. Configure Endpoints */
     if (max_dci > 1) {
+        kprintf("[USB] Sending Configure Endpoint on Slot %u (max_dci=%u)...\n", slot_id, max_dci);
         res = xhci_cmd_configure_ep(ctrl, slot_id, input_ctx);
         if (res != 0) {
             kprint_color(0x4F, "[USB] Configure Endpoint failed on Slot %u (err %d)\n", slot_id, res);
+        } else {
+            kprintf("[USB] Configure Endpoint success on Slot %u\n", slot_id);
         }
     }
 
     kfree(input_ctx);
 
     /* 9. Send Set Configuration */
+    kprintf("[USB] Sending Set Configuration (%u) on Slot %u...\n", dev->cfg_desc.bConfigurationValue, slot_id);
     res = usb_set_configuration(dev, dev->cfg_desc.bConfigurationValue);
     if (res != 0) {
         kprint_color(0x4F, "[USB] Set Configuration failed on Slot %u (err %d)\n", slot_id, res);
         return res;
     }
+    kprintf("[USB] Set Configuration success on Slot %u\n", slot_id);
 
     /* 10. Attach Drivers */
     if (is_hub) {
@@ -576,6 +594,9 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                 usb_hid_init_device(dev, iface);
             } else if (iface->interface_class == USB_CLASS_MASS_STORAGE) {
                 usb_msc_init_device(dev, iface);
+            } else if (iface->interface_class == USB_CLASS_AUDIO ||
+                       (dev->dev_desc.idVendor == USB_VID_CMEDIA && dev->dev_desc.idProduct == USB_PID_CMEDIA_AUDIO_ADAPTER)) {
+                usb_audio_init_device(dev, iface);
             }
         }
     }

@@ -1358,6 +1358,12 @@ static void assemble_line(const char *line, int line_idx, int pass) {
         emit_modrm_sib(g_cur_section, ops[1].reg_num, &ops[0], pass);
         return;
     }
+    if (strcmp(token, "movswl") == 0 && op_count == 2 && ops[1].kind == OP_REG) {
+        sec_emit_byte(g_cur_section, 0x0F);
+        sec_emit_byte(g_cur_section, 0xBF);
+        emit_modrm_sib(g_cur_section, ops[1].reg_num, &ops[0], pass);
+        return;
+    }
 
     /* MOV: movb, movw, movl */
     if ((strcmp(token, "movb") == 0 || strcmp(token, "movw") == 0 || strcmp(token, "movl") == 0 || strcmp(token, "mov") == 0) && op_count == 2) {

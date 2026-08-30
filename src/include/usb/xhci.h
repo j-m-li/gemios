@@ -12,7 +12,7 @@
 #include "xhci_trb.h"
 #include "usb_defs.h"
 
-#define XHCI_RING_SIZE 64
+#define XHCI_RING_SIZE 4096
 #define XHCI_MAX_SLOTS 32
 #define XHCI_MAX_PORTS 32
 
@@ -116,11 +116,15 @@ int xhci_clear_endpoint_stall(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t 
 
 /* Ring & Doorbell helpers */
 void xhci_init_ep_ring(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci);
+void xhci_reset_ep_ring(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci);
 void xhci_ring_doorbell(xhci_controller_t *ctrl, uint8_t target_slot, uint8_t target_dci);
 void xhci_submit_async_trb(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool dir_in);
 int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_packet_t *setup, void *data, uint16_t len);
 int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool dir_in);
 int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len);
+int xhci_isoch_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool sia, bool ioc);
+int xhci_isoch_transfer_frame(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, uint32_t frame_id, bool sia, bool ioc);
+uint32_t xhci_get_current_frame(xhci_controller_t *ctrl);
 
 /* Root Hub management */
 void xhci_scan_ports(xhci_controller_t *ctrl);

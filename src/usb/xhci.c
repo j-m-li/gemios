@@ -36,9 +36,11 @@ static void ring_init(xhci_ring_t *ring, size_t size) {
     ring->enqueue_idx = 0;
     ring->dequeue_idx = 0;
     ring->cycle = 1;
-    ring->trbs = (xhci_trb_t*)kmalloc_aligned(size * sizeof(xhci_trb_t), 64);
+    if (!ring->trbs) {
+        ring->trbs = (xhci_trb_t*)kmalloc_aligned(size * sizeof(xhci_trb_t), 64);
+        ring->phys_addr = (phys_addr_t)ring->trbs;
+    }
     memset(ring->trbs, 0, size * sizeof(xhci_trb_t));
-    ring->phys_addr = (phys_addr_t)ring->trbs;
 }
 
 static void ring_setup_link_trb(xhci_ring_t *ring) {
@@ -46,7 +48,7 @@ static void ring_setup_link_trb(xhci_ring_t *ring) {
     link->parameter_lo = (uint32_t)ring->phys_addr;
     link->parameter_hi = 0;
     link->status = 0;
-    link->control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC;
+    link->control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | (ring->cycle ? TRB_CYCLE : 0);
 }
 
 static void xhci_ring_enqueue_trb(xhci_ring_t *ring, xhci_trb_t *trb) {
@@ -54,13 +56,18 @@ static void xhci_ring_enqueue_trb(xhci_ring_t *ring, xhci_trb_t *trb) {
     idx = ring->enqueue_idx;
 
     if (idx >= ring->size - 1) {
+        ring->trbs[ring->size - 1].parameter_lo = (uint32_t)ring->phys_addr;
+        ring->trbs[ring->size - 1].parameter_hi = 0;
         ring->trbs[ring->size - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | (ring->cycle ? TRB_CYCLE : 0);
         ring->enqueue_idx = 0;
         ring->cycle ^= 1;
         idx = 0;
     }
 
-    trb->control |= (ring->cycle ? TRB_CYCLE : 0);
+    trb->control &= ~TRB_CYCLE;
+    if (ring->cycle) {
+        trb->control |= TRB_CYCLE;
+    }
     memcpy(&ring->trbs[idx], trb, sizeof(xhci_trb_t));
     ring->enqueue_idx++;
 }
@@ -458,6 +465,17 @@ void xhci_init_ep_ring(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci)
     ring_setup_link_trb(&slot->ep_rings[ep_dci]);
 }
 
+void xhci_reset_ep_ring(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci) {
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
+    if (!ctrl || slot_id == 0 || ep_dci == 0) return;
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[ep_dci];
+    ring_init(ring, XHCI_RING_SIZE);
+    ring_setup_link_trb(ring);
+    xhci_cmd_set_tr_dequeue(ctrl, slot_id, ep_dci, ring->phys_addr, 1);
+}
+
 void xhci_submit_async_trb(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool dir_in) {
     xhci_slot_t *slot;
     xhci_ring_t *ring;
@@ -539,7 +557,16 @@ int xhci_control_transfer(xhci_controller_t *ctrl, uint8_t slot_id, usb_setup_pa
                 if (ev_slot == slot_id && ev_ep == 1) {
                     uint8_t code;
                     code = TRB_GET_COMP_CODE(evt->status);
-                    result = (code == TRB_COMP_SUCCESS || code == TRB_COMP_SHORT_PACKET) ? 0 : -(int)code;
+                    if (code == TRB_COMP_SUCCESS || code == TRB_COMP_SHORT_PACKET) {
+                        result = 0;
+                    } else {
+                        result = -(int)code;
+                        /* Reset EP0 if stalled or errored so subsequent control transfers succeed */
+                        ring->dequeue_idx = ring->enqueue_idx;
+                        xhci_cmd_reset_ep(ctrl, slot_id, 1);
+                        phys_addr_t deq = ring->phys_addr + (ring->dequeue_idx * sizeof(xhci_trb_t));
+                        xhci_cmd_set_tr_dequeue(ctrl, slot_id, 1, deq, ring->cycle);
+                    }
                     break;
                 } else {
                     usb_hid_on_transfer_complete(ev_slot, ev_ep, evt->status);
@@ -605,6 +632,39 @@ int xhci_bulk_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci,
 
 int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len) {
     return xhci_bulk_transfer(ctrl, slot_id, ep_dci, data, len, true);
+}
+
+uint32_t xhci_get_current_frame(xhci_controller_t *ctrl) {
+    if (!ctrl || !ctrl->rt_base) return 0;
+    return (mmio_read32(ctrl->rt_base + 0x00) >> 3) & 0x7FF;
+}
+
+int xhci_isoch_transfer_frame(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, uint32_t frame_id, bool sia, bool ioc) {
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
+    xhci_trb_t trb;
+
+    if (!ctrl || slot_id == 0 || ep_dci == 0 || !data || len == 0) return -1;
+
+    xhci_lock();
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[ep_dci];
+
+    memset(&trb, 0, sizeof(trb));
+    trb.parameter_lo = (uint32_t)(phys_addr_t)data;
+    trb.parameter_hi = 0;
+    trb.status = len;
+    trb.control = TRB_SET_TYPE(TRB_TYPE_ISOCH) |
+                  (sia ? TRB_SIA : (((frame_id) & 0x7FF) << 20)) |
+                  (ioc ? TRB_IOC : 0);
+
+    xhci_ring_enqueue_trb(ring, &trb);
+    xhci_unlock();
+    return 0;
+}
+
+int xhci_isoch_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool sia, bool ioc) {
+    return xhci_isoch_transfer_frame(ctrl, slot_id, ep_dci, data, len, 0, sia, ioc);
 }
 
 bool xhci_reset_root_port(xhci_controller_t *ctrl, uint8_t port) {
@@ -729,6 +789,15 @@ void xhci_poll(void) {
             uint8_t ev_ep;
             ev_slot = TRB_GET_SLOT_ID(evt->control);
             ev_ep = TRB_GET_EP_ID(evt->control);
+            if (ev_slot > 0 && ev_slot <= XHCI_MAX_SLOTS && ev_ep < 32) {
+                xhci_ring_t *ep_ring = &g_xhci.slots[ev_slot].ep_rings[ev_ep];
+                if (ep_ring->phys_addr != 0) {
+                    uint32_t trb_phys = evt->parameter_lo;
+                    if (trb_phys >= ep_ring->phys_addr && trb_phys < ep_ring->phys_addr + (ep_ring->size * sizeof(xhci_trb_t))) {
+                        ep_ring->dequeue_idx = (trb_phys - (uint32_t)ep_ring->phys_addr) / sizeof(xhci_trb_t);
+                    }
+                }
+            }
             usb_hid_on_transfer_complete(ev_slot, ev_ep, evt->status);
         } else if (type == TRB_TYPE_PORT_STATUS_CHANGE) {
             uint8_t port_id;

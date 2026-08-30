@@ -445,6 +445,7 @@ int main(int argc, char **argv) {
         } else {
             fat_set_entry(fat_buf, fat_type, prev_cluster, c);
         }
+        fat_set_entry(fat_buf, fat_type, c, (fat_type == 12) ? 0x0FFF : (fat_type == 16 ? 0xFFFF : 0x0FFFFFFF));
         prev_cluster = c;
 
         {
@@ -473,13 +474,6 @@ int main(int argc, char **argv) {
     if (prev_cluster != 0) {
         uint32_t eoc = (fat_type == 12) ? 0x0FFF : (fat_type == 16 ? 0xFFFF : 0x0FFFFFFF);
         fat_set_entry(fat_buf, fat_type, prev_cluster, eoc);
-    }
-
-    fseek(f_img, (long)rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
-    fwrite(fat_buf, 1, fat_bytes, f_img);
-    if (num_fats > 1) {
-        fseek(f_img, (long)(rsvd_sec_cnt + fat_sz) * SECTOR_SIZE, SEEK_SET);
-        fwrite(fat_buf, 1, fat_bytes, f_img);
     }
 
     get_dos_time(&dos_time, &dos_date);
@@ -659,6 +653,13 @@ int main(int argc, char **argv) {
         }
 
         free(clus_buf);
+    }
+
+    fseek(f_img, (long)rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
+    fwrite(fat_buf, 1, fat_bytes, f_img);
+    if (num_fats > 1) {
+        fseek(f_img, (long)(rsvd_sec_cnt + fat_sz) * SECTOR_SIZE, SEEK_SET);
+        fwrite(fat_buf, 1, fat_bytes, f_img);
     }
 
     free(fat_buf);
