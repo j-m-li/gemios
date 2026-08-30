@@ -1,6 +1,8 @@
 /*
  * This is free and unencumbered software released into the public domain.
  * GEMIOS Preemptive Real-Time Operating System
+ *
+ * FAT12/FAT16/FAT32 Filesystem Driver with Long File Name (LFN/VFAT) Support
  */
 
 #include "fat.h"
@@ -12,6 +14,28 @@ typedef struct {
     bool is_root_fixed;    /* true for FAT12/FAT16 root directory */
     uint32_t cluster;      /* cluster for FAT32 root (fs->root_cluster) or subdirectories (>=2) */
 } fat_dir_t;
+
+typedef struct {
+    fat_dir_entry_t entry;
+    uint32_t sector;
+    int slot;
+    bool has_lfn;
+    uint32_t lfn_start_sec;
+    int lfn_start_slot;
+    int lfn_count;
+    char lfn_name[256];
+} fat_entry_loc_t;
+
+typedef struct {
+    char lfn_name[256];
+    uint8_t checksum;
+    uint8_t expected_seq;
+    bool has_lfn;
+    bool is_valid;
+    uint32_t start_sec;
+    int start_slot;
+    int total_lfn_entries;
+} lfn_parser_t;
 
 static char to_upper_char(char c) {
     if (c >= 'a' && c <= 'z') return c - 'a' + 'A';
@@ -36,6 +60,112 @@ static uint32_t fat_read_le32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+static uint8_t fat_lfn_checksum(const uint8_t *short_name) {
+    uint8_t sum = 0;
+    int i;
+    for (i = 0; i < 11; i++) {
+        sum = (uint8_t)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + short_name[i]);
+    }
+    return sum;
+}
+
+static void decode_lfn_chars(const uint8_t *src, int count, char *dst) {
+    int i;
+    for (i = 0; i < count; i++) {
+        uint16_t u = (uint16_t)src[i * 2] | ((uint16_t)src[i * 2 + 1] << 8);
+        if (u == 0x0000 || u == 0xFFFF) {
+            dst[i] = '\0';
+            break;
+        } else {
+            dst[i] = (char)(u & 0xFF);
+        }
+    }
+}
+
+static void encode_lfn_chars(const char *src, int src_len, int start_idx, uint8_t *dst, int count) {
+    int i;
+    for (i = 0; i < count; i++) {
+        int idx = start_idx + i;
+        uint16_t u;
+        if (idx < src_len) {
+            u = (uint16_t)(uint8_t)src[idx];
+        } else if (idx == src_len) {
+            u = 0x0000; /* Null terminator */
+        } else {
+            u = 0xFFFF; /* Unused padding */
+        }
+        dst[i * 2] = (uint8_t)(u & 0xFF);
+        dst[i * 2 + 1] = (uint8_t)((u >> 8) & 0xFF);
+    }
+}
+
+static void lfn_parser_reset(lfn_parser_t *p) {
+    memset(p->lfn_name, 0, sizeof(p->lfn_name));
+    p->checksum = 0;
+    p->expected_seq = 0;
+    p->has_lfn = false;
+    p->is_valid = false;
+    p->start_sec = 0;
+    p->start_slot = -1;
+    p->total_lfn_entries = 0;
+}
+
+static void lfn_parser_feed(lfn_parser_t *p, const fat_dir_entry_t *entry, uint32_t sec, int slot) {
+    if ((uint8_t)entry->name[0] == 0x00 || (uint8_t)entry->name[0] == 0xE5) {
+        lfn_parser_reset(p);
+        return;
+    }
+
+    if (entry->attr == FAT_ATTR_LFN) {
+        const fat_lfn_entry_t *lfn = (const fat_lfn_entry_t*)entry;
+        uint8_t order = lfn->order;
+        uint8_t seq = order & FAT_LFN_SEQ_MASK;
+
+        if (seq == 0 || seq > 20) {
+            lfn_parser_reset(p);
+            return;
+        }
+
+        if (order & FAT_LFN_LAST_MASK) {
+            lfn_parser_reset(p);
+            p->expected_seq = seq;
+            p->checksum = lfn->checksum;
+            p->has_lfn = true;
+            p->is_valid = true;
+            p->start_sec = sec;
+            p->start_slot = slot;
+            p->total_lfn_entries = seq;
+        } else {
+            if (!p->is_valid || p->checksum != lfn->checksum || seq != p->expected_seq) {
+                p->is_valid = false;
+                p->has_lfn = false;
+                return;
+            }
+        }
+
+        {
+            int base_idx = (seq - 1) * 13;
+            if (base_idx + 13 < 256) {
+                decode_lfn_chars(lfn->name1, 5, &p->lfn_name[base_idx + 0]);
+                decode_lfn_chars(lfn->name2, 6, &p->lfn_name[base_idx + 5]);
+                decode_lfn_chars(lfn->name3, 2, &p->lfn_name[base_idx + 11]);
+            }
+        }
+
+        p->expected_seq--;
+    } else {
+        /* Standard 8.3 entry */
+        if (p->has_lfn && p->is_valid && p->expected_seq == 0 &&
+            p->checksum == fat_lfn_checksum((const uint8_t*)entry->name)) {
+            p->lfn_name[255] = '\0';
+        } else {
+            p->has_lfn = false;
+            p->is_valid = false;
+            p->total_lfn_entries = 0;
+        }
+    }
+}
+
 static bool is_valid_fat_bpb(const uint8_t *sector, uint32_t *out_total_sectors) {
     uint32_t total;
     uint16_t bytes_per_sec;
@@ -45,37 +175,31 @@ static bool is_valid_fat_bpb(const uint8_t *sector, uint32_t *out_total_sectors)
     uint16_t tot_sec_16;
     uint32_t tot_sec_32;
 
-    /* Check boot jump instruction (0xEB or 0xE9) */
     if (sector[0] != 0xEB && sector[0] != 0xE9) {
         return false;
     }
 
     bytes_per_sec = fat_read_le16(&sector[11]);
-    /* Bytes per sector must be standard 512, 1024, 2048, or 4096 */
     if (bytes_per_sec != 512 && bytes_per_sec != 1024 &&
         bytes_per_sec != 2048 && bytes_per_sec != 4096) {
         return false;
     }
 
     sec_per_clus = sector[13];
-    /* Sectors per cluster must be non-zero power of 2 (1, 2, 4, 8, 16, 32, 64, 128) */
     if (sec_per_clus == 0 || (sec_per_clus & (sec_per_clus - 1)) != 0) {
         return false;
     }
 
     rsvd_sec_cnt = fat_read_le16(&sector[14]);
-    /* Reserved sector count must be >= 1 */
     if (rsvd_sec_cnt == 0) {
         return false;
     }
 
     num_fats = sector[16];
-    /* Num FATs typically 1 or 2 */
     if (num_fats == 0 || num_fats > 4) {
         return false;
     }
 
-    /* Must have boot sector signature 0x55, 0xAA at offset 510 */
     if (sector[510] != 0x55 || sector[511] != 0xAA) {
         return false;
     }
@@ -111,10 +235,8 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
     total_sectors = 0;
 
     if (is_valid_fat_bpb(sector, &total_sectors)) {
-        /* Sector 0 is a direct VBR (Superfloppy / raw FAT partition) */
         lba_offset = 0;
     } else if (sector[510] == 0x55 && sector[511] == 0xAA) {
-        /* Sector 0 is an MBR! Probe MBR partition table (Partitions 1-4) */
         bool found_part = false;
         int p;
         for (p = 0; p < 4; p++) {
@@ -135,10 +257,10 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
             }
         }
         if (!found_part) {
-            return -1; /* No valid FAT partition found in MBR */
+            return -1;
         }
     } else {
-        return -1; /* Not a valid FAT filesystem */
+        return -1;
     }
 
     fs->lba_offset = lba_offset;
@@ -152,7 +274,6 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
         uint16_t fat_sz16 = fat_read_le16(&sector[22]);
         uint16_t root_ent_cnt = fat_read_le16(&sector[17]);
         if (fat_sz16 != 0) {
-            /* FAT12 or FAT16 */
             fs->fat_size_sectors = (uint32_t)fat_sz16;
             fs->fat_start_sector = fs->lba_offset + fs->reserved_sectors;
             fs->root_dir_start_sector = fs->fat_start_sector + (fs->num_fats * fs->fat_size_sectors);
@@ -160,7 +281,6 @@ int fat_mount(block_dev_t *bdev, fat_fs_t *fs) {
             fs->data_start_sector = fs->root_dir_start_sector + fs->root_dir_sectors;
             fs->root_cluster = 0;
         } else {
-            /* FAT32 */
             fs->fat_size_sectors = fat_read_le32(&sector[36]);
             fs->fat_start_sector = fs->lba_offset + fs->reserved_sectors;
             fs->root_dir_start_sector = 0;
@@ -247,6 +367,92 @@ static void to_fat_83_name(const char *src, char *dest) {
     }
 }
 
+static bool fat_needs_lfn(const char *name) {
+    int i;
+    int base_len;
+    int ext_len;
+    const char *dot;
+    size_t total_len;
+
+    if (!name) return false;
+    total_len = strlen(name);
+    if (total_len > 12) return true;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return false;
+
+    dot = NULL;
+    for (i = 0; name[i]; i++) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') return true;
+        if (c == ' ' || c == '+' || c == ',' || c == ';' || c == '=' || c == '[' || c == ']') return true;
+        if (c == '.') {
+            if (dot != NULL) return true;
+            dot = &name[i];
+        }
+    }
+
+    if (!dot) {
+        if (total_len > 8) return true;
+    } else {
+        base_len = (int)(dot - name);
+        ext_len = (int)(total_len - base_len - 1);
+        if (base_len > 8 || ext_len > 3 || base_len == 0) return true;
+    }
+
+    return false;
+}
+
+static void fat_generate_short_alias(const char *long_name, int tail_num, char *out_short_11) {
+    char base[9];
+    char ext[4];
+    char tail_str[8];
+    const char *last_dot;
+    int b, e, i, tail_len;
+
+    memset(out_short_11, ' ', 11);
+    memset(base, 0, sizeof(base));
+    memset(ext, 0, sizeof(ext));
+
+    last_dot = strrchr(long_name, '.');
+
+    b = 0;
+    for (i = 0; long_name[i] && (last_dot == NULL || &long_name[i] < last_dot) && b < 8; i++) {
+        char c = to_upper_char(long_name[i]);
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            base[b++] = c;
+        }
+    }
+    if (b == 0) {
+        strcpy(base, "FILE");
+        b = 4;
+    }
+
+    if (last_dot) {
+        e = 0;
+        for (i = 1; last_dot[i] && e < 3; i++) {
+            char c = to_upper_char(last_dot[i]);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+                ext[e++] = c;
+            }
+        }
+    }
+
+    tail_len = snprintf(tail_str, sizeof(tail_str), "~%d", tail_num);
+    if (tail_len > 7) tail_len = 7;
+
+    if (b + tail_len > 8) {
+        b = 8 - tail_len;
+    }
+    base[b] = '\0';
+    strcat(base, tail_str);
+
+    for (i = 0; base[i] && i < 8; i++) {
+        out_short_11[i] = base[i];
+    }
+    for (i = 0; ext[i] && i < 3; i++) {
+        out_short_11[8 + i] = ext[i];
+    }
+}
+
 static uint32_t get_next_cluster(fat_fs_t *fs, uint32_t cluster) {
     uint8_t sector[512];
 
@@ -264,7 +470,7 @@ static uint32_t get_next_cluster(fat_fs_t *fs, uint32_t cluster) {
 
         if (fs->bdev->read(fs->bdev, fat_sector, 1, sector) != 0) return 0xFFFFFFFF;
         next = *(uint16_t*)&sector[ent_offset];
-        if (next < 2 || next >= 0xFFF8 || next == cluster) return 0xFFFFFFFF; /* EOF, reserved, or cycle */
+        if (next < 2 || next >= 0xFFF8 || next == cluster) return 0xFFFFFFFF;
         return next;
     } else if (fs->type == FAT_TYPE_FAT32) {
         uint32_t fat_offset;
@@ -278,7 +484,7 @@ static uint32_t get_next_cluster(fat_fs_t *fs, uint32_t cluster) {
 
         if (fs->bdev->read(fs->bdev, fat_sector, 1, sector) != 0) return 0xFFFFFFFF;
         next = (*(uint32_t*)&sector[ent_offset]) & 0x0FFFFFFF;
-        if (next < 2 || next >= 0x0FFFFFF8 || next == cluster) return 0xFFFFFFFF; /* EOF, reserved, or cycle */
+        if (next < 2 || next >= 0x0FFFFFF8 || next == cluster) return 0xFFFFFFFF;
         return next;
     }
 
@@ -412,9 +618,11 @@ static fat_dir_t fat_root_dir(fat_fs_t *fs) {
     return d;
 }
 
-/* Find an entry by name in directory */
-static int fat_dir_find_entry(fat_fs_t *fs, fat_dir_t dir, const char *name,
-                              fat_dir_entry_t *out_entry, uint32_t *out_sector, int *out_slot) {
+/* Find an entry by name in directory (matching LFN or 8.3 short name) */
+static int fat_dir_find_entry(fat_fs_t *fs, fat_dir_t dir, const char *name, fat_entry_loc_t *out_loc) {
+    lfn_parser_t parser;
+    lfn_parser_reset(&parser);
+
     if (dir.is_root_fixed) {
         uint8_t sector[512];
         uint32_t max_root_sectors;
@@ -432,18 +640,41 @@ static int fat_dir_find_entry(fat_fs_t *fs, fat_dir_t dir, const char *name,
             entries = (fat_dir_entry_t*)sector;
             for (e = 0; e < 16; e++) {
                 char fname[16];
+                bool match;
 
                 if ((uint8_t)entries[e].name[0] == 0x00) return -1; /* End of directory */
-                if ((uint8_t)entries[e].name[0] == 0xE5) continue;  /* Deleted entry */
+                if ((uint8_t)entries[e].name[0] == 0xE5) {
+                    lfn_parser_reset(&parser);
+                    continue;
+                }
+
+                lfn_parser_feed(&parser, &entries[e], cur_sec, e);
                 if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
 
                 format_fat_name(entries[e].name, fname);
-                if (fat_name_equals(fname, name)) {
-                    if (out_entry) *out_entry = entries[e];
-                    if (out_sector) *out_sector = cur_sec;
-                    if (out_slot) *out_slot = e;
+                match = false;
+
+                if (parser.has_lfn && parser.is_valid && fat_name_equals(parser.lfn_name, name)) {
+                    match = true;
+                } else if (fat_name_equals(fname, name)) {
+                    match = true;
+                }
+
+                if (match) {
+                    if (out_loc) {
+                        out_loc->entry = entries[e];
+                        out_loc->sector = cur_sec;
+                        out_loc->slot = e;
+                        out_loc->has_lfn = parser.has_lfn && parser.is_valid;
+                        out_loc->lfn_start_sec = parser.start_sec;
+                        out_loc->lfn_start_slot = parser.start_slot;
+                        out_loc->lfn_count = parser.total_lfn_entries;
+                        strncpy(out_loc->lfn_name, (parser.has_lfn && parser.is_valid) ? parser.lfn_name : fname, 255);
+                        out_loc->lfn_name[255] = '\0';
+                    }
                     return 0;
                 }
+                lfn_parser_reset(&parser);
             }
         }
         return -1;
@@ -474,26 +705,53 @@ static int fat_dir_find_entry(fat_fs_t *fs, fat_dir_t dir, const char *name,
             entries = (fat_dir_entry_t*)cluster_buf;
             for (e = 0; e < entries_per_cluster; e++) {
                 char fname[16];
+                uint32_t sec_offset;
+                uint32_t cur_sec;
+                int slot;
+                bool match;
 
                 if ((uint8_t)entries[e].name[0] == 0x00) {
                     kfree(cluster_buf);
                     return -1; /* End of directory */
                 }
-                if ((uint8_t)entries[e].name[0] == 0xE5) continue;
+
+                sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
+                cur_sec = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
+                slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
+
+                if ((uint8_t)entries[e].name[0] == 0xE5) {
+                    lfn_parser_reset(&parser);
+                    continue;
+                }
+
+                lfn_parser_feed(&parser, &entries[e], cur_sec, slot);
                 if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
 
                 format_fat_name(entries[e].name, fname);
-                if (fat_name_equals(fname, name)) {
-                    uint32_t sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
-                    uint32_t cur_sec = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
-                    int slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
+                match = false;
 
-                    if (out_entry) *out_entry = entries[e];
-                    if (out_sector) *out_sector = cur_sec;
-                    if (out_slot) *out_slot = slot;
+                if (parser.has_lfn && parser.is_valid && fat_name_equals(parser.lfn_name, name)) {
+                    match = true;
+                } else if (fat_name_equals(fname, name)) {
+                    match = true;
+                }
+
+                if (match) {
+                    if (out_loc) {
+                        out_loc->entry = entries[e];
+                        out_loc->sector = cur_sec;
+                        out_loc->slot = slot;
+                        out_loc->has_lfn = parser.has_lfn && parser.is_valid;
+                        out_loc->lfn_start_sec = parser.start_sec;
+                        out_loc->lfn_start_slot = parser.start_slot;
+                        out_loc->lfn_count = parser.total_lfn_entries;
+                        strncpy(out_loc->lfn_name, (parser.has_lfn && parser.is_valid) ? parser.lfn_name : fname, 255);
+                        out_loc->lfn_name[255] = '\0';
+                    }
                     kfree(cluster_buf);
                     return 0;
                 }
+                lfn_parser_reset(&parser);
             }
 
             next = get_next_cluster(fs, cur_cluster);
@@ -506,17 +764,26 @@ static int fat_dir_find_entry(fat_fs_t *fs, fat_dir_t dir, const char *name,
     }
 }
 
-/* Find matching entry or allocate free slot in directory */
-static int fat_dir_find_or_alloc_slot(fat_fs_t *fs, fat_dir_t dir, const char *name,
-                                      uint32_t *out_sector, int *out_slot,
-                                      fat_dir_entry_t *out_entry, bool *out_exists) {
-    uint32_t free_sector;
-    int free_slot;
+/* Find or allocate N consecutive slots in directory for LFN + 8.3 entry */
+static int fat_dir_find_or_alloc_lfn_slots(fat_fs_t *fs, fat_dir_t dir, const char *name, int num_slots,
+                                           uint32_t *out_sec, int *out_slot,
+                                           fat_entry_loc_t *out_existing_loc, bool *out_exists) {
+    uint32_t run_start_sec;
+    int run_start_slot;
+    int run_count;
     uint32_t last_cluster;
 
     *out_exists = false;
-    free_sector = 0;
-    free_slot = -1;
+    if (fat_dir_find_entry(fs, dir, name, out_existing_loc) == 0) {
+        *out_exists = true;
+        *out_sec = out_existing_loc->sector;
+        *out_slot = out_existing_loc->slot;
+        return 0;
+    }
+
+    run_start_sec = 0;
+    run_start_slot = -1;
+    run_count = 0;
     last_cluster = 0;
 
     if (dir.is_root_fixed) {
@@ -535,34 +802,21 @@ static int fat_dir_find_or_alloc_slot(fat_fs_t *fs, fat_dir_t dir, const char *n
 
             entries = (fat_dir_entry_t*)sector;
             for (e = 0; e < 16; e++) {
-                char fname[16];
-
                 if ((uint8_t)entries[e].name[0] == 0x00 || (uint8_t)entries[e].name[0] == 0xE5) {
-                    if (free_slot == -1) {
-                        free_sector = cur_sec;
-                        free_slot = e;
+                    if (run_count == 0) {
+                        run_start_sec = cur_sec;
+                        run_start_slot = e;
                     }
-                    if ((uint8_t)entries[e].name[0] == 0x00) goto fixed_search_done;
-                    continue;
-                }
-                if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
-
-                format_fat_name(entries[e].name, fname);
-                if (fat_name_equals(fname, name)) {
-                    *out_exists = true;
-                    *out_sector = cur_sec;
-                    *out_slot = e;
-                    if (out_entry) *out_entry = entries[e];
-                    return 0;
+                    run_count++;
+                    if (run_count >= num_slots) {
+                        *out_sec = run_start_sec;
+                        *out_slot = run_start_slot;
+                        return 0;
+                    }
+                } else {
+                    run_count = 0;
                 }
             }
-        }
-
-    fixed_search_done:
-        if (free_slot != -1) {
-            *out_sector = free_sector;
-            *out_slot = free_slot;
-            return 0;
         }
         return -1; /* Fixed root directory full */
     } else {
@@ -594,31 +848,24 @@ static int fat_dir_find_or_alloc_slot(fat_fs_t *fs, fat_dir_t dir, const char *n
 
             entries = (fat_dir_entry_t*)cluster_buf;
             for (e = 0; e < entries_per_cluster; e++) {
-                char fname[16];
+                uint32_t sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
+                uint32_t cur_sec = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
+                int slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
 
                 if ((uint8_t)entries[e].name[0] == 0x00 || (uint8_t)entries[e].name[0] == 0xE5) {
-                    if (free_slot == -1) {
-                        uint32_t sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
-                        free_sector = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
-                        free_slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
+                    if (run_count == 0) {
+                        run_start_sec = cur_sec;
+                        run_start_slot = slot;
                     }
-                    if ((uint8_t)entries[e].name[0] == 0x00) {
+                    run_count++;
+                    if (run_count >= num_slots) {
+                        *out_sec = run_start_sec;
+                        *out_slot = run_start_slot;
                         kfree(cluster_buf);
-                        goto clus_search_done;
+                        return 0;
                     }
-                    continue;
-                }
-                if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
-
-                format_fat_name(entries[e].name, fname);
-                if (fat_name_equals(fname, name)) {
-                    uint32_t sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
-                    *out_sector = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
-                    *out_slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
-                    *out_exists = true;
-                    if (out_entry) *out_entry = entries[e];
-                    kfree(cluster_buf);
-                    return 0;
+                } else {
+                    run_count = 0;
                 }
             }
 
@@ -628,20 +875,12 @@ static int fat_dir_find_or_alloc_slot(fat_fs_t *fs, fat_dir_t dir, const char *n
         }
         kfree(cluster_buf);
 
-    clus_search_done:
-        if (free_slot != -1) {
-            *out_sector = free_sector;
-            *out_slot = free_slot;
-            return 0;
-        }
-
-        /* Expand directory: allocate new cluster */
+        /* Allocate new directory cluster */
         new_c = alloc_free_cluster(fs);
-        if (new_c == 0) return -1; /* Disk full */
+        if (new_c == 0) return -1;
 
         set_fat_entry(fs, last_cluster, new_c);
 
-        /* Zero out the newly allocated directory cluster */
         zero_buf = (uint8_t*)kmalloc(fs->bytes_per_cluster);
         if (zero_buf) {
             memset(zero_buf, 0, fs->bytes_per_cluster);
@@ -649,17 +888,63 @@ static int fat_dir_find_or_alloc_slot(fat_fs_t *fs, fat_dir_t dir, const char *n
             kfree(zero_buf);
         }
 
-        *out_sector = fs->data_start_sector + ((new_c - 2) * fs->sectors_per_cluster);
+        *out_sec = fs->data_start_sector + ((new_c - 2) * fs->sectors_per_cluster);
         *out_slot = 0;
         return 0;
     }
+}
+
+/* Write chain of LFN entries + short 8.3 entry into directory slots */
+static int fat_write_lfn_and_short_entry(fat_fs_t *fs, uint32_t start_sec, int start_slot,
+                                         const char *long_name, const char *short_11,
+                                         const fat_dir_entry_t *short_entry) {
+    int name_len = (int)strlen(long_name);
+    int num_lfn = fat_needs_lfn(long_name) ? ((name_len + 12) / 13) : 0;
+    uint8_t chk = fat_lfn_checksum((const uint8_t*)short_11);
+    uint32_t cur_sec = start_sec;
+    int cur_slot = start_slot;
+    int seq;
+    uint8_t sec_buf[512];
+
+    if (fs->bdev->read(fs->bdev, cur_sec, 1, sec_buf) != 0) return -1;
+
+    for (seq = num_lfn; seq >= 1; seq--) {
+        fat_lfn_entry_t *lfn = &((fat_lfn_entry_t*)sec_buf)[cur_slot];
+        memset(lfn, 0, sizeof(fat_lfn_entry_t));
+        lfn->order = (seq == num_lfn) ? (FAT_LFN_LAST_MASK | seq) : seq;
+        lfn->attr = FAT_ATTR_LFN;
+        lfn->type = 0;
+        lfn->checksum = chk;
+        lfn->fst_clus_lo[0] = 0;
+        lfn->fst_clus_lo[1] = 0;
+
+        encode_lfn_chars(long_name, name_len, (seq - 1) * 13 + 0, lfn->name1, 5);
+        encode_lfn_chars(long_name, name_len, (seq - 1) * 13 + 5, lfn->name2, 6);
+        encode_lfn_chars(long_name, name_len, (seq - 1) * 13 + 11, lfn->name3, 2);
+
+        cur_slot++;
+        if (cur_slot >= (int)(fs->bytes_per_sector / sizeof(fat_dir_entry_t))) {
+            if (fs->bdev->write(fs->bdev, cur_sec, 1, sec_buf) != 0) return -1;
+            cur_sec++;
+            cur_slot = 0;
+            if (fs->bdev->read(fs->bdev, cur_sec, 1, sec_buf) != 0) return -1;
+        }
+    }
+
+    {
+        fat_dir_entry_t *ent = &((fat_dir_entry_t*)sec_buf)[cur_slot];
+        *ent = *short_entry;
+        memcpy(ent->name, short_11, 11);
+    }
+
+    return fs->bdev->write(fs->bdev, cur_sec, 1, sec_buf);
 }
 
 /* Resolve a path string to a fat_dir_t directory */
 static int fat_resolve_dir(fat_fs_t *fs, const char *path, fat_dir_t *out_dir) {
     fat_dir_t cur_dir;
     const char *p;
-    char comp[64];
+    char comp[256];
 
     if (!fs || !out_dir) return -1;
 
@@ -679,13 +964,11 @@ static int fat_resolve_dir(fat_fs_t *fs, const char *path, fat_dir_t *out_dir) {
 
     while (*p) {
         int len;
-        fat_dir_entry_t ent;
-        uint32_t sec;
-        int slot;
+        fat_entry_loc_t loc;
         uint32_t clus;
 
         len = 0;
-        while (*p && *p != '/' && *p != '\\' && len < 63) {
+        while (*p && *p != '/' && *p != '\\' && len < 255) {
             comp[len++] = *p++;
         }
         comp[len] = '\0';
@@ -699,11 +982,9 @@ static int fat_resolve_dir(fat_fs_t *fs, const char *path, fat_dir_t *out_dir) {
             if (cur_dir.is_root_fixed || (fs->type == FAT_TYPE_FAT32 && cur_dir.cluster == fs->root_cluster)) {
                 cur_dir = fat_root_dir(fs);
             } else {
-                fat_dir_entry_t pent;
-                uint32_t psec;
-                int pslot;
-                if (fat_dir_find_entry(fs, cur_dir, "..", &pent, &psec, &pslot) == 0) {
-                    uint32_t pclus = ((uint32_t)pent.fst_clus_hi << 16) | pent.fst_clus_lo;
+                fat_entry_loc_t ploc;
+                if (fat_dir_find_entry(fs, cur_dir, "..", &ploc) == 0) {
+                    uint32_t pclus = ((uint32_t)ploc.entry.fst_clus_hi << 16) | ploc.entry.fst_clus_lo;
                     if (pclus == 0 || (fs->type == FAT_TYPE_FAT32 && pclus == fs->root_cluster)) {
                         cur_dir = fat_root_dir(fs);
                     } else {
@@ -717,14 +998,14 @@ static int fat_resolve_dir(fat_fs_t *fs, const char *path, fat_dir_t *out_dir) {
             continue;
         }
 
-        if (fat_dir_find_entry(fs, cur_dir, comp, &ent, &sec, &slot) != 0) {
-            return -1; /* Directory component not found */
+        if (fat_dir_find_entry(fs, cur_dir, comp, &loc) != 0) {
+            return -1;
         }
-        if (!(ent.attr & FAT_ATTR_DIRECTORY)) {
-            return -1; /* Not a directory */
+        if (!(loc.entry.attr & FAT_ATTR_DIRECTORY)) {
+            return -1;
         }
 
-        clus = ((uint32_t)ent.fst_clus_hi << 16) | ent.fst_clus_lo;
+        clus = ((uint32_t)loc.entry.fst_clus_hi << 16) | loc.entry.fst_clus_lo;
         if (clus < 2) {
             cur_dir = fat_root_dir(fs);
         } else {
@@ -739,7 +1020,7 @@ static int fat_resolve_dir(fat_fs_t *fs, const char *path, fat_dir_t *out_dir) {
 
 /* Resolve a path to parent directory fat_dir_t and target base name */
 static int fat_resolve_parent_and_name(fat_fs_t *fs, const char *path, fat_dir_t *out_parent_dir, char *out_name) {
-    char clean_path[256];
+    char clean_path[512];
     size_t pl;
     int last_slash;
     int i;
@@ -751,7 +1032,6 @@ static int fat_resolve_parent_and_name(fat_fs_t *fs, const char *path, fat_dir_t
     memcpy(clean_path, path, pl);
     clean_path[pl] = '\0';
 
-    /* Strip trailing slashes */
     while (pl > 1 && (clean_path[pl - 1] == '/' || clean_path[pl - 1] == '\\')) {
         clean_path[--pl] = '\0';
     }
@@ -766,18 +1046,18 @@ static int fat_resolve_parent_and_name(fat_fs_t *fs, const char *path, fat_dir_t
 
     if (last_slash == -1) {
         *out_parent_dir = fat_root_dir(fs);
-        strncpy(out_name, clean_path, 63);
-        out_name[63] = '\0';
+        strncpy(out_name, clean_path, 255);
+        out_name[255] = '\0';
         return 0;
     } else if (last_slash == 0) {
         *out_parent_dir = fat_root_dir(fs);
-        strncpy(out_name, clean_path + 1, 63);
-        out_name[63] = '\0';
+        strncpy(out_name, clean_path + 1, 255);
+        out_name[255] = '\0';
         return 0;
     } else {
         clean_path[last_slash] = '\0';
-        strncpy(out_name, clean_path + last_slash + 1, 63);
-        out_name[63] = '\0';
+        strncpy(out_name, clean_path + last_slash + 1, 255);
+        out_name[255] = '\0';
         return fat_resolve_dir(fs, clean_path, out_parent_dir);
     }
 }
@@ -785,8 +1065,10 @@ static int fat_resolve_parent_and_name(fat_fs_t *fs, const char *path, fat_dir_t
 int fat_list_dir(fat_fs_t *fs, const char *path) {
     fat_dir_t dir;
     int files_found;
+    lfn_parser_t parser;
 
     if (!fs || !fs->bdev) return -1;
+    lfn_parser_reset(&parser);
 
     if (path == NULL || path[0] == '\0' || strcmp(path, "/") == 0) {
         dir = fat_root_dir(fs);
@@ -799,8 +1081,8 @@ int fat_list_dir(fat_fs_t *fs, const char *path) {
         }
         if (dir.is_root_fixed || (fs->type == FAT_TYPE_FAT32 && dir.cluster == fs->root_cluster)) {
             kprintf("\n--- Filesystem on %s (FAT%d) ---\n",
-                    fs->bdev->name,
-                    (fs->type == FAT_TYPE_FAT12) ? 12 : (fs->type == FAT_TYPE_FAT16 ? 16 : 32));
+                fs->bdev->name,
+                (fs->type == FAT_TYPE_FAT12) ? 12 : (fs->type == FAT_TYPE_FAT16 ? 16 : 32));
         } else {
             kprintf("\n--- Directory '%s' on %s (FAT%d) ---\n",
                     path, fs->bdev->name,
@@ -808,8 +1090,8 @@ int fat_list_dir(fat_fs_t *fs, const char *path) {
         }
     }
 
-    kprintf("%-16s %-8s %10s\n", "Name", "Type", "Size (bytes)");
-    kprintf("----------------------------------------\n");
+    kprintf("%-36s %-8s %12s\n", "Name", "Type", "Size (bytes)");
+    kprintf("-------------------------------------------------------------\n");
 
     files_found = 0;
 
@@ -829,23 +1111,30 @@ int fat_list_dir(fat_fs_t *fs, const char *path) {
 
             entries = (fat_dir_entry_t*)sector;
             for (e = 0; e < 16; e++) {
-                char filename[16];
+                char short_fname[16];
+                const char *display_name;
                 const char *type_str;
 
                 if ((uint8_t)entries[e].name[0] == 0x00) {
                     goto done;
                 }
                 if ((uint8_t)entries[e].name[0] == 0xE5) {
+                    lfn_parser_reset(&parser);
                     continue;
                 }
+
+                lfn_parser_feed(&parser, &entries[e], fs->root_dir_start_sector + s, e);
                 if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) {
                     continue;
                 }
 
-                format_fat_name(entries[e].name, filename);
+                format_fat_name(entries[e].name, short_fname);
+                display_name = (parser.has_lfn && parser.is_valid && parser.lfn_name[0] != '\0') ? parser.lfn_name : short_fname;
                 type_str = (entries[e].attr & FAT_ATTR_DIRECTORY) ? "<DIR>" : "FILE";
-                kprintf("%-16s %-8s %10u\n", filename, type_str, entries[e].file_size);
+
+                kprintf("%-36s %-8s %12u\n", display_name, type_str, entries[e].file_size);
                 files_found++;
+                lfn_parser_reset(&parser);
             }
         }
     } else {
@@ -876,24 +1165,34 @@ int fat_list_dir(fat_fs_t *fs, const char *path) {
 
             entries = (fat_dir_entry_t*)cluster_buf;
             for (e = 0; e < entries_per_cluster; e++) {
-                char filename[16];
+                char short_fname[16];
+                const char *display_name;
                 const char *type_str;
+                uint32_t sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
+                uint32_t cur_sec = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
+                int slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
 
                 if ((uint8_t)entries[e].name[0] == 0x00) {
                     kfree(cluster_buf);
                     goto done;
                 }
                 if ((uint8_t)entries[e].name[0] == 0xE5) {
+                    lfn_parser_reset(&parser);
                     continue;
                 }
+
+                lfn_parser_feed(&parser, &entries[e], cur_sec, slot);
                 if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) {
                     continue;
                 }
 
-                format_fat_name(entries[e].name, filename);
+                format_fat_name(entries[e].name, short_fname);
+                display_name = (parser.has_lfn && parser.is_valid && parser.lfn_name[0] != '\0') ? parser.lfn_name : short_fname;
                 type_str = (entries[e].attr & FAT_ATTR_DIRECTORY) ? "<DIR>" : "FILE";
-                kprintf("%-16s %-8s %10u\n", filename, type_str, entries[e].file_size);
+
+                kprintf("%-36s %-8s %12u\n", display_name, type_str, entries[e].file_size);
                 files_found++;
+                lfn_parser_reset(&parser);
             }
 
             next = get_next_cluster(fs, cur_cluster);
@@ -905,7 +1204,7 @@ int fat_list_dir(fat_fs_t *fs, const char *path) {
     }
 
 done:
-    kprintf("----------------------------------------\n");
+    kprintf("-------------------------------------------------------------\n");
     kprintf("Total: %d item(s)\n", files_found);
     return files_found;
 }
@@ -925,10 +1224,8 @@ int fat_is_dir(fat_fs_t *fs, const char *path) {
 
 int fat_read_file(fat_fs_t *fs, const char *path, void *buf, size_t max_len, size_t *out_len) {
     fat_dir_t parent_dir;
-    char filename[64];
-    fat_dir_entry_t target_entry;
-    uint32_t sector;
-    int slot;
+    char filename[256];
+    fat_entry_loc_t loc;
     uint32_t start_cluster;
     uint32_t file_size;
     size_t to_read;
@@ -944,16 +1241,16 @@ int fat_read_file(fat_fs_t *fs, const char *path, void *buf, size_t max_len, siz
         return -1;
     }
 
-    if (fat_dir_find_entry(fs, parent_dir, filename, &target_entry, &sector, &slot) != 0) {
-        return -1; /* File not found */
+    if (fat_dir_find_entry(fs, parent_dir, filename, &loc) != 0) {
+        return -1;
     }
 
-    if (target_entry.attr & FAT_ATTR_DIRECTORY) {
-        return -1; /* Path is a directory, not a file */
+    if (loc.entry.attr & FAT_ATTR_DIRECTORY) {
+        return -1;
     }
 
-    start_cluster = ((uint32_t)target_entry.fst_clus_hi << 16) | target_entry.fst_clus_lo;
-    file_size = target_entry.file_size;
+    start_cluster = ((uint32_t)loc.entry.fst_clus_hi << 16) | loc.entry.fst_clus_lo;
+    file_size = loc.entry.file_size;
     to_read = MIN(file_size, max_len);
 
     if (to_read == 0 || start_cluster < 2) {
@@ -998,10 +1295,11 @@ int fat_read_file(fat_fs_t *fs, const char *path, void *buf, size_t max_len, siz
 
 int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len) {
     fat_dir_t parent_dir;
-    char filename[64];
+    char filename[256];
+    char short_11[11];
     uint32_t dir_sector;
     int dir_slot;
-    fat_dir_entry_t entry;
+    fat_entry_loc_t existing_loc;
     bool exists;
     int res;
     uint32_t first_cluster;
@@ -1009,37 +1307,37 @@ int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len) 
     size_t bytes_written;
     uint32_t cur_cluster;
     uint32_t eof_val;
-    uint8_t sector[512];
-    fat_dir_entry_t *target_entry;
+    int num_lfn_slots;
+    int total_needed_slots;
+    fat_dir_entry_t entry;
 
     if (!fs || !fs->bdev || !path) return -1;
-
-    dir_sector = 0;
-    dir_slot = -1;
-    exists = false;
 
     if (fat_resolve_parent_and_name(fs, path, &parent_dir, filename) != 0) {
         return -1;
     }
 
-    res = fat_dir_find_or_alloc_slot(fs, parent_dir, filename, &dir_sector, &dir_slot, &entry, &exists);
+    num_lfn_slots = fat_needs_lfn(filename) ? ((strlen(filename) + 12) / 13) : 0;
+    total_needed_slots = num_lfn_slots + 1;
+
+    res = fat_dir_find_or_alloc_lfn_slots(fs, parent_dir, filename, total_needed_slots,
+                                          &dir_sector, &dir_slot, &existing_loc, &exists);
     if (res != 0) return res;
 
-    if (exists && (entry.attr & FAT_ATTR_DIRECTORY)) {
-        return -1; /* Cannot overwrite directory with a file */
+    if (exists && (existing_loc.entry.attr & FAT_ATTR_DIRECTORY)) {
+        return -1;
     }
 
     first_cluster = 0;
     if (exists) {
-        first_cluster = ((uint32_t)entry.fst_clus_hi << 16) | entry.fst_clus_lo;
+        first_cluster = ((uint32_t)existing_loc.entry.fst_clus_hi << 16) | existing_loc.entry.fst_clus_lo;
     }
 
     if (first_cluster < 2) {
         first_cluster = alloc_free_cluster(fs);
-        if (first_cluster == 0) return -1; /* Disk full */
+        if (first_cluster == 0) return -1;
     }
 
-    /* Write data to cluster chain */
     cluster_buf = (uint8_t*)kmalloc(fs->bytes_per_cluster);
     if (!cluster_buf) return -1;
 
@@ -1073,7 +1371,7 @@ int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len) 
             next = alloc_free_cluster(fs);
             if (next == 0) {
                 kfree(cluster_buf);
-                return -1; /* Disk full */
+                return -1;
             }
             set_fat_entry(fs, cur_cluster, next);
         }
@@ -1082,38 +1380,59 @@ int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len) 
 
     kfree(cluster_buf);
 
-    /* Update Directory Entry */
-    if (fs->bdev->read(fs->bdev, dir_sector, 1, sector) != 0) return -1;
-    target_entry = &((fat_dir_entry_t*)sector)[dir_slot];
-    to_fat_83_name(filename, target_entry->name);
-    target_entry->attr = FAT_ATTR_ARCHIVE;
-    target_entry->fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
-    target_entry->fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
-    target_entry->file_size = (uint32_t)len;
+    if (exists) {
+        uint8_t sec_buf[512];
+        fat_dir_entry_t *target_entry;
+        if (fs->bdev->read(fs->bdev, existing_loc.sector, 1, sec_buf) != 0) return -1;
+        target_entry = &((fat_dir_entry_t*)sec_buf)[existing_loc.slot];
+        target_entry->attr = FAT_ATTR_ARCHIVE;
+        target_entry->fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
+        target_entry->fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+        target_entry->file_size = (uint32_t)len;
+        return fs->bdev->write(fs->bdev, existing_loc.sector, 1, sec_buf);
+    } else {
+        int tail;
+        memset(&entry, 0, sizeof(entry));
+        entry.attr = FAT_ATTR_ARCHIVE;
+        entry.fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
+        entry.fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+        entry.file_size = (uint32_t)len;
 
-    return fs->bdev->write(fs->bdev, dir_sector, 1, sector);
+        if (num_lfn_slots > 0) {
+            for (tail = 1; tail < 100; tail++) {
+                fat_entry_loc_t check_loc;
+                fat_generate_short_alias(filename, tail, short_11);
+                if (fat_dir_find_entry(fs, parent_dir, short_11, &check_loc) != 0) {
+                    break;
+                }
+            }
+        } else {
+            to_fat_83_name(filename, short_11);
+        }
+
+        return fat_write_lfn_and_short_entry(fs, dir_sector, dir_slot, filename, short_11, &entry);
+    }
 }
 
 int fat_mkdir(fat_fs_t *fs, const char *path) {
     fat_dir_t parent_dir;
-    char dirname[64];
+    char dirname[256];
+    char short_11[11];
     uint32_t dir_sector;
     int dir_slot;
-    fat_dir_entry_t entry;
+    fat_entry_loc_t existing_loc;
     bool exists;
     int res;
     uint32_t new_cluster;
     uint8_t *cluster_buf;
     fat_dir_entry_t *dot_entries;
     uint32_t parent_cluster;
-    uint8_t sector[512];
-    fat_dir_entry_t *target_entry;
+    int num_lfn_slots;
+    int total_needed_slots;
+    fat_dir_entry_t entry;
+    int tail;
 
     if (!fs || !fs->bdev || !path || path[0] == '\0') return -1;
-
-    dir_sector = 0;
-    dir_slot = -1;
-    exists = false;
 
     if (fat_resolve_parent_and_name(fs, path, &parent_dir, dirname) != 0) {
         return -1;
@@ -1123,22 +1442,24 @@ int fat_mkdir(fat_fs_t *fs, const char *path) {
         return -1;
     }
 
-    res = fat_dir_find_or_alloc_slot(fs, parent_dir, dirname, &dir_sector, &dir_slot, &entry, &exists);
+    num_lfn_slots = fat_needs_lfn(dirname) ? ((strlen(dirname) + 12) / 13) : 0;
+    total_needed_slots = num_lfn_slots + 1;
+
+    res = fat_dir_find_or_alloc_lfn_slots(fs, parent_dir, dirname, total_needed_slots,
+                                          &dir_sector, &dir_slot, &existing_loc, &exists);
     if (res != 0) return res;
-    if (exists) return -2; /* Directory or file already exists */
+    if (exists) return -2; /* Already exists */
 
-    /* 2. Allocate a cluster for the new directory */
     new_cluster = alloc_free_cluster(fs);
-    if (new_cluster == 0) return -1; /* Disk full */
+    if (new_cluster == 0) return -1;
 
-    /* 3. Initialize directory contents: '.' and '..' */
     cluster_buf = (uint8_t*)kmalloc(fs->bytes_per_cluster);
     if (!cluster_buf) return -1;
     memset(cluster_buf, 0, fs->bytes_per_cluster);
 
     dot_entries = (fat_dir_entry_t*)cluster_buf;
 
-    /* '.' entry (self) */
+    /* '.' entry */
     memset(dot_entries[0].name, ' ', 11);
     dot_entries[0].name[0] = '.';
     dot_entries[0].attr = FAT_ATTR_DIRECTORY;
@@ -1146,7 +1467,7 @@ int fat_mkdir(fat_fs_t *fs, const char *path) {
     dot_entries[0].fst_clus_hi = (uint16_t)((new_cluster >> 16) & 0xFFFF);
     dot_entries[0].file_size = 0;
 
-    /* '..' entry (parent) */
+    /* '..' entry */
     memset(dot_entries[1].name, ' ', 11);
     dot_entries[1].name[0] = '.';
     dot_entries[1].name[1] = '.';
@@ -1154,7 +1475,7 @@ int fat_mkdir(fat_fs_t *fs, const char *path) {
 
     parent_cluster = parent_dir.is_root_fixed ? 0 : parent_dir.cluster;
     if (fs->type == FAT_TYPE_FAT32 && parent_cluster == fs->root_cluster) {
-        parent_cluster = 0; /* Standard FAT32 root dotdot is cluster 0 */
+        parent_cluster = 0;
     }
     dot_entries[1].fst_clus_lo = (uint16_t)(parent_cluster & 0xFFFF);
     dot_entries[1].fst_clus_hi = (uint16_t)((parent_cluster >> 16) & 0xFFFF);
@@ -1166,16 +1487,25 @@ int fat_mkdir(fat_fs_t *fs, const char *path) {
     }
     kfree(cluster_buf);
 
-    /* 4. Update directory entry in parent directory */
-    if (fs->bdev->read(fs->bdev, dir_sector, 1, sector) != 0) return -1;
-    target_entry = &((fat_dir_entry_t*)sector)[dir_slot];
-    to_fat_83_name(dirname, target_entry->name);
-    target_entry->attr = FAT_ATTR_DIRECTORY;
-    target_entry->fst_clus_lo = (uint16_t)(new_cluster & 0xFFFF);
-    target_entry->fst_clus_hi = (uint16_t)((new_cluster >> 16) & 0xFFFF);
-    target_entry->file_size = 0;
+    memset(&entry, 0, sizeof(entry));
+    entry.attr = FAT_ATTR_DIRECTORY;
+    entry.fst_clus_lo = (uint16_t)(new_cluster & 0xFFFF);
+    entry.fst_clus_hi = (uint16_t)((new_cluster >> 16) & 0xFFFF);
+    entry.file_size = 0;
 
-    return fs->bdev->write(fs->bdev, dir_sector, 1, sector);
+    if (num_lfn_slots > 0) {
+        for (tail = 1; tail < 100; tail++) {
+            fat_entry_loc_t check_loc;
+            fat_generate_short_alias(dirname, tail, short_11);
+            if (fat_dir_find_entry(fs, parent_dir, short_11, &check_loc) != 0) {
+                break;
+            }
+        }
+    } else {
+        to_fat_83_name(dirname, short_11);
+    }
+
+    return fat_write_lfn_and_short_entry(fs, dir_sector, dir_slot, dirname, short_11, &entry);
 }
 
 static void fat_free_cluster_chain(fat_fs_t *fs, uint32_t start_cluster) {
@@ -1229,7 +1559,6 @@ static int fat_wipe_dir_contents(fat_fs_t *fs, uint32_t dir_cluster) {
             if ((uint8_t)entries[e].name[0] == 0xE5) continue;
             if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
 
-            /* Skip '.' and '..' */
             if (entries[e].name[0] == '.' && (entries[e].name[1] == ' ' || (entries[e].name[1] == '.' && entries[e].name[2] == ' '))) {
                 continue;
             }
@@ -1262,16 +1591,18 @@ static int fat_wipe_dir_contents(fat_fs_t *fs, uint32_t dir_cluster) {
     return 0;
 }
 
-static int fat_delete_entry(fat_fs_t *fs, uint32_t sector, int slot, fat_dir_entry_t *entry, bool recursive) {
+static int fat_delete_entry_at(fat_fs_t *fs, uint32_t sector, int slot, const fat_dir_entry_t *entry,
+                               uint32_t lfn_sec, int lfn_slot, int lfn_count, bool recursive) {
     uint8_t sec_buf[512];
     fat_dir_entry_t *entries;
+    int k;
 
     if (!fs || !entry) return -1;
 
     if (entry->attr & FAT_ATTR_DIRECTORY) {
         uint32_t dir_cluster;
         if (!recursive) {
-            return -2; /* Cannot remove directory without -r */
+            return -2;
         }
         dir_cluster = ((uint32_t)entry->fst_clus_hi << 16) | entry->fst_clus_lo;
         if (dir_cluster >= 2) {
@@ -1286,6 +1617,29 @@ static int fat_delete_entry(fat_fs_t *fs, uint32_t sector, int slot, fat_dir_ent
         }
     }
 
+    /* Mark preceding LFN entries as deleted */
+    if (lfn_count > 0 && lfn_sec > 0 && lfn_slot >= 0) {
+        uint32_t cur_lfn_sec = lfn_sec;
+        int cur_lfn_slot = lfn_slot;
+
+        if (fs->bdev->read(fs->bdev, cur_lfn_sec, 1, sec_buf) == 0) {
+            entries = (fat_dir_entry_t*)sec_buf;
+            for (k = 0; k < lfn_count; k++) {
+                entries[cur_lfn_slot].name[0] = (char)0xE5;
+                cur_lfn_slot++;
+                if (cur_lfn_slot >= (int)(fs->bytes_per_sector / sizeof(fat_dir_entry_t))) {
+                    fs->bdev->write(fs->bdev, cur_lfn_sec, 1, sec_buf);
+                    cur_lfn_sec++;
+                    cur_lfn_slot = 0;
+                    if (fs->bdev->read(fs->bdev, cur_lfn_sec, 1, sec_buf) != 0) break;
+                    entries = (fat_dir_entry_t*)sec_buf;
+                }
+            }
+            fs->bdev->write(fs->bdev, cur_lfn_sec, 1, sec_buf);
+        }
+    }
+
+    /* Mark main 8.3 entry deleted */
     if (fs->bdev->read(fs->bdev, sector, 1, sec_buf) != 0) return -1;
     entries = (fat_dir_entry_t*)sec_buf;
     entries[slot].name[0] = (char)0xE5;
@@ -1318,9 +1672,10 @@ static bool fat_pattern_match(const char *pattern, const char *str) {
 
 int fat_remove(fat_fs_t *fs, const char *path, bool recursive) {
     fat_dir_t parent_dir;
-    char target_pattern[64];
+    char target_pattern[256];
     bool is_wildcard;
     int removed_count;
+    lfn_parser_t parser;
 
     if (!fs || !fs->bdev || !path || path[0] == '\0') return -1;
 
@@ -1334,6 +1689,7 @@ int fat_remove(fat_fs_t *fs, const char *path, bool recursive) {
 
     is_wildcard = (strchr(target_pattern, '*') != NULL || strchr(target_pattern, '?') != NULL);
     removed_count = 0;
+    lfn_parser_reset(&parser);
 
     if (parent_dir.is_root_fixed) {
         uint8_t sector[512];
@@ -1355,32 +1711,48 @@ int fat_remove(fat_fs_t *fs, const char *path, bool recursive) {
                 bool match;
 
                 if ((uint8_t)entries[e].name[0] == 0x00) goto done_search;
-                if ((uint8_t)entries[e].name[0] == 0xE5) continue;
+                if ((uint8_t)entries[e].name[0] == 0xE5) {
+                    lfn_parser_reset(&parser);
+                    continue;
+                }
+
+                lfn_parser_feed(&parser, &entries[e], cur_sec, e);
                 if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
 
-                /* Skip '.' and '..' */
                 if (entries[e].name[0] == '.' && (entries[e].name[1] == ' ' || (entries[e].name[1] == '.' && entries[e].name[2] == ' '))) {
+                    lfn_parser_reset(&parser);
                     continue;
                 }
 
                 format_fat_name(entries[e].name, fname);
-
                 match = false;
+
                 if (is_wildcard) {
-                    match = fat_pattern_match(target_pattern, fname);
+                    if (parser.has_lfn && parser.is_valid && fat_pattern_match(target_pattern, parser.lfn_name)) {
+                        match = true;
+                    } else if (fat_pattern_match(target_pattern, fname)) {
+                        match = true;
+                    }
                 } else {
-                    match = fat_name_equals(fname, target_pattern);
+                    if (parser.has_lfn && parser.is_valid && fat_name_equals(parser.lfn_name, target_pattern)) {
+                        match = true;
+                    } else if (fat_name_equals(fname, target_pattern)) {
+                        match = true;
+                    }
                 }
 
                 if (match) {
-                    int del_res = fat_delete_entry(fs, cur_sec, e, &entries[e], recursive);
+                    int del_res = fat_delete_entry_at(fs, cur_sec, e, &entries[e],
+                                                      parser.start_sec, parser.start_slot, parser.total_lfn_entries,
+                                                      recursive);
                     if (del_res == 0) {
                         removed_count++;
                         if (!is_wildcard) return 1;
                     } else if (del_res == -2 && !is_wildcard) {
-                        return -2; /* Is a directory without -r */
+                        return -2;
                     }
                 }
+                lfn_parser_reset(&parser);
             }
         }
     } else {
@@ -1410,35 +1782,54 @@ int fat_remove(fat_fs_t *fs, const char *path, bool recursive) {
             entries = (fat_dir_entry_t*)cluster_buf;
             for (e = 0; e < entries_per_cluster; e++) {
                 char fname[16];
+                uint32_t sec_offset;
+                uint32_t cur_sec;
+                int slot;
                 bool match;
 
                 if ((uint8_t)entries[e].name[0] == 0x00) {
                     kfree(cluster_buf);
                     goto done_search;
                 }
-                if ((uint8_t)entries[e].name[0] == 0xE5) continue;
+
+                sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
+                cur_sec = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
+                slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
+
+                if ((uint8_t)entries[e].name[0] == 0xE5) {
+                    lfn_parser_reset(&parser);
+                    continue;
+                }
+
+                lfn_parser_feed(&parser, &entries[e], cur_sec, slot);
                 if (entries[e].attr == FAT_ATTR_LFN || (entries[e].attr & FAT_ATTR_VOLUME_ID)) continue;
 
-                /* Skip '.' and '..' */
                 if (entries[e].name[0] == '.' && (entries[e].name[1] == ' ' || (entries[e].name[1] == '.' && entries[e].name[2] == ' '))) {
+                    lfn_parser_reset(&parser);
                     continue;
                 }
 
                 format_fat_name(entries[e].name, fname);
-
                 match = false;
+
                 if (is_wildcard) {
-                    match = fat_pattern_match(target_pattern, fname);
+                    if (parser.has_lfn && parser.is_valid && fat_pattern_match(target_pattern, parser.lfn_name)) {
+                        match = true;
+                    } else if (fat_pattern_match(target_pattern, fname)) {
+                        match = true;
+                    }
                 } else {
-                    match = fat_name_equals(fname, target_pattern);
+                    if (parser.has_lfn && parser.is_valid && fat_name_equals(parser.lfn_name, target_pattern)) {
+                        match = true;
+                    } else if (fat_name_equals(fname, target_pattern)) {
+                        match = true;
+                    }
                 }
 
                 if (match) {
-                    uint32_t sec_offset = (e * sizeof(fat_dir_entry_t)) / fs->bytes_per_sector;
-                    uint32_t cur_sec = fs->data_start_sector + ((cur_cluster - 2) * fs->sectors_per_cluster) + sec_offset;
-                    int slot = e % (fs->bytes_per_sector / sizeof(fat_dir_entry_t));
-
-                    int del_res = fat_delete_entry(fs, cur_sec, slot, &entries[e], recursive);
+                    int del_res = fat_delete_entry_at(fs, cur_sec, slot, &entries[e],
+                                                      parser.start_sec, parser.start_slot, parser.total_lfn_entries,
+                                                      recursive);
                     if (del_res == 0) {
                         removed_count++;
                         if (!is_wildcard) {
@@ -1447,9 +1838,10 @@ int fat_remove(fat_fs_t *fs, const char *path, bool recursive) {
                         }
                     } else if (del_res == -2 && !is_wildcard) {
                         kfree(cluster_buf);
-                        return -2; /* Is a directory without -r */
+                        return -2;
                     }
                 }
+                lfn_parser_reset(&parser);
             }
 
             next = get_next_cluster(fs, cur_cluster);

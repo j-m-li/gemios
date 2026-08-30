@@ -41,14 +41,13 @@ echo "   - Devices:         USB Keyboard, USB Mouse, USB Storage, USB Hub"
 echo "   - Downstream:      Secondary USB Mouse on USB Hub"
 echo "=========================================================="
 
+    echo -device usb-host,vendorid=0x2109,productid=0x0813,bus=xhci.0,port=2
 exec $QEMU -kernel build/gemios.elf -m 256M \
     -vga std \
     $GRAPHICS_FLAG \
     -device qemu-xhci,id=xhci,p2=8,p3=8 \
     -device usb-kbd,bus=xhci.0,port=1 \
-    -device usb-host,vendorid=0x2109,productid=0x0813,bus=xhci.0,port=2
-    
-echo -drive if=none,id=usbstick,format=raw,file=$DISK_FILE \
+    -drive if=none,id=usbstick,format=raw,file=$DISK_FILE \
     -device usb-storage,bus=xhci.0,port=3,drive=usbstick \
     -device usb-hub,bus=xhci.0,port=4 \
     -device usb-hub,bus=xhci.0,port=4.2 \

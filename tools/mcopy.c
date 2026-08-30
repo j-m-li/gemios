@@ -1,6 +1,6 @@
 /*
  * This is free and unencumbered software released into the public domain.
- * GEMIOS - Host Tool: mcopy replacement
+ * GEMIOS - Host Tool: mcopy replacement with Long File Name (VFAT) Support
  *
  * Copies files from host filesystem into a FAT12/FAT16/FAT32 disk image.
  * Standard C90 compliant.
@@ -36,6 +36,17 @@ struct fat_dir_entry {
     uint32_t file_size;
 };
 
+struct fat_lfn_entry {
+    uint8_t  order;
+    uint8_t  name1[10];
+    uint8_t  attr;
+    uint8_t  type;
+    uint8_t  checksum;
+    uint8_t  name2[12];
+    uint8_t  fst_clus_lo[2];
+    uint8_t  name3[4];
+};
+
 static uint16_t rd_le16(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
@@ -65,173 +76,262 @@ static void get_dos_time(uint16_t *dos_time, uint16_t *dos_date) {
                            (tm->tm_mday & 0x1F));
 }
 
-static void convert_to_83(const char *src, char *dst) {
+static uint8_t calc_lfn_checksum(const char *short_name) {
+    uint8_t sum = 0;
     int i;
-    const char *dot;
-    int name_len;
+    for (i = 0; i < 11; i++) {
+        sum = (uint8_t)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + (uint8_t)short_name[i]);
+    }
+    return sum;
+}
+
+static char to_upper_char(char c) {
+    if (c >= 'a' && c <= 'z') return c - 'a' + 'A';
+    return c;
+}
+
+static int needs_lfn(const char *name) {
+    int i;
+    int base_len;
     int ext_len;
+    const char *dot;
+    size_t total_len;
+
+    if (!name) return 0;
+    total_len = strlen(name);
+    if (total_len > 12) return 1;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+
+    dot = NULL;
+    for (i = 0; name[i]; i++) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') return 1;
+        if (c == ' ' || c == '+' || c == ',' || c == ';' || c == '=' || c == '[' || c == ']') return 1;
+        if (c == '.') {
+            if (dot != NULL) return 1;
+            dot = &name[i];
+        }
+    }
+
+    if (!dot) {
+        if (total_len > 8) return 1;
+    } else {
+        base_len = (int)(dot - name);
+        ext_len = (int)(total_len - base_len - 1);
+        if (base_len > 8 || ext_len > 3 || base_len == 0) return 1;
+    }
+
+    return 0;
+}
+
+static void convert_to_83(const char *src, char *dst) {
+    char base[9];
+    char ext[4];
+    const char *last_dot;
+    int b, e, i;
 
     memset(dst, ' ', 11);
+    memset(base, 0, sizeof(base));
+    memset(ext, 0, sizeof(ext));
 
-    /* Skip any leading drive/colons or path slashes */
+    /* Skip leading colons or slashes */
     while (*src == ':' || *src == '/' || *src == '\\') src++;
 
-    dot = strrchr(src, '.');
-    if (dot) {
-        name_len = (int)(dot - src);
-        if (name_len > 8) name_len = 8;
-        for (i = 0; i < name_len; i++) {
-            char c = src[i];
-            if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-            dst[i] = c;
-        }
+    last_dot = strrchr(src, '.');
 
-        dot++;
-        ext_len = (int)strlen(dot);
-        if (ext_len > 3) ext_len = 3;
-        for (i = 0; i < ext_len; i++) {
-            char c = dot[i];
-            if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-            dst[8 + i] = c;
+    b = 0;
+    for (i = 0; src[i] && (last_dot == NULL || &src[i] < last_dot) && b < 8; i++) {
+        char c = to_upper_char(src[i]);
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            base[b++] = c;
         }
-    } else {
-        name_len = (int)strlen(src);
-        if (name_len > 8) name_len = 8;
-        for (i = 0; i < name_len; i++) {
-            char c = src[i];
-            if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-            dst[i] = c;
+    }
+    if (b == 0) {
+        strcpy(base, "FILE");
+        b = 4;
+    }
+
+    if (last_dot) {
+        e = 0;
+        for (i = 1; last_dot[i] && e < 3; i++) {
+            char c = to_upper_char(last_dot[i]);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+                ext[e++] = c;
+            }
         }
+    }
+
+    if (needs_lfn(src)) {
+        if (b > 6) b = 6;
+        base[b] = '\0';
+        strcat(base, "~1");
+    }
+
+    for (i = 0; base[i] && i < 8; i++) {
+        dst[i] = base[i];
+    }
+    for (i = 0; ext[i] && i < 3; i++) {
+        dst[8 + i] = ext[i];
     }
 }
 
-static uint32_t fat_get_entry(const uint8_t *fat, int fat_type, uint32_t cluster) {
+static void encode_lfn_chars(const char *src, int src_len, int start_idx, uint8_t *dst, int count) {
+    int i;
+    for (i = 0; i < count; i++) {
+        int idx = start_idx + i;
+        uint16_t u;
+        if (idx < src_len) {
+            u = (uint16_t)(uint8_t)src[idx];
+        } else if (idx == src_len) {
+            u = 0x0000;
+        } else {
+            u = 0xFFFF;
+        }
+        dst[i * 2] = (uint8_t)(u & 0xFF);
+        dst[i * 2 + 1] = (uint8_t)((u >> 8) & 0xFF);
+    }
+}
+
+static void write_lfn_entries(struct fat_dir_entry *entries, int start_slot, const char *long_name, const char *short_11, int num_lfn) {
+    int name_len = (int)strlen(long_name);
+    uint8_t chk = calc_lfn_checksum(short_11);
+    int seq;
+    int cur_slot = start_slot;
+
+    for (seq = num_lfn; seq >= 1; seq--) {
+        struct fat_lfn_entry *lfn = (struct fat_lfn_entry*)(void*)&entries[cur_slot];
+        memset(lfn, 0, sizeof(struct fat_lfn_entry));
+        lfn->order = (seq == num_lfn) ? (0x40 | seq) : seq;
+        lfn->attr = 0x0F;
+        lfn->type = 0;
+        lfn->checksum = chk;
+        lfn->fst_clus_lo[0] = 0;
+        lfn->fst_clus_lo[1] = 0;
+
+        encode_lfn_chars(long_name, name_len, (seq - 1) * 13 + 0, lfn->name1, 5);
+        encode_lfn_chars(long_name, name_len, (seq - 1) * 13 + 5, lfn->name2, 6);
+        encode_lfn_chars(long_name, name_len, (seq - 1) * 13 + 11, lfn->name3, 2);
+
+        cur_slot++;
+    }
+}
+
+static uint32_t fat_get_entry(const uint8_t *fat_buf, int fat_type, uint32_t cluster) {
     if (fat_type == 12) {
         uint32_t offset = cluster + (cluster / 2);
-        uint16_t val = (uint16_t)(fat[offset] | (fat[offset + 1] << 8));
-        if (cluster & 1) {
-            return val >> 4;
-        } else {
-            return val & 0x0FFF;
-        }
+        uint16_t val = (uint16_t)fat_buf[offset] | ((uint16_t)fat_buf[offset + 1] << 8);
+        if (cluster & 1) return val >> 4;
+        else return val & 0x0FFF;
     } else if (fat_type == 16) {
-        const uint16_t *f16 = (const uint16_t*)(const void*)fat;
-        return f16[cluster];
+        uint32_t offset = cluster * 2;
+        return (uint32_t)rd_le16(&fat_buf[offset]);
     } else {
-        const uint32_t *f32 = (const uint32_t*)(const void*)fat;
-        return f32[cluster] & 0x0FFFFFFF;
+        uint32_t offset = cluster * 4;
+        return rd_le32(&fat_buf[offset]) & 0x0FFFFFFF;
     }
 }
 
-static void fat_set_entry(uint8_t *fat, int fat_type, uint32_t cluster, uint32_t value) {
+static void fat_set_entry(uint8_t *fat_buf, int fat_type, uint32_t cluster, uint32_t val) {
     if (fat_type == 12) {
         uint32_t offset = cluster + (cluster / 2);
-        uint16_t val = (uint16_t)(fat[offset] | (fat[offset + 1] << 8));
+        uint16_t cur = (uint16_t)fat_buf[offset] | ((uint16_t)fat_buf[offset + 1] << 8);
         if (cluster & 1) {
-            val = (uint16_t)((val & 0x000F) | ((value & 0x0FFF) << 4));
+            cur = (cur & 0x000F) | ((val & 0x0FFF) << 4);
         } else {
-            val = (uint16_t)((val & 0xF000) | (value & 0x0FFF));
+            cur = (cur & 0xF000) | (val & 0x0FFF);
         }
-        fat[offset] = (uint8_t)(val & 0xFF);
-        fat[offset + 1] = (uint8_t)((val >> 8) & 0xFF);
+        fat_buf[offset] = (uint8_t)(cur & 0xFF);
+        fat_buf[offset + 1] = (uint8_t)((cur >> 8) & 0xFF);
     } else if (fat_type == 16) {
-        uint16_t *f16 = (uint16_t*)(void*)fat;
-        f16[cluster] = (uint16_t)(value & 0xFFFF);
+        uint32_t offset = cluster * 2;
+        fat_buf[offset] = (uint8_t)(val & 0xFF);
+        fat_buf[offset + 1] = (uint8_t)((val >> 8) & 0xFF);
     } else {
-        uint32_t *f32 = (uint32_t*)(void*)fat;
-        f32[cluster] = (f32[cluster] & 0xF0000000) | (value & 0x0FFFFFFF);
+        uint32_t offset = cluster * 4;
+        uint32_t orig = rd_le32(&fat_buf[offset]);
+        uint32_t nw = (orig & 0xF0000000) | (val & 0x0FFFFFFF);
+        fat_buf[offset] = (uint8_t)(nw & 0xFF);
+        fat_buf[offset + 1] = (uint8_t)((nw >> 8) & 0xFF);
+        fat_buf[offset + 2] = (uint8_t)((nw >> 16) & 0xFF);
+        fat_buf[offset + 3] = (uint8_t)((nw >> 24) & 0xFF);
     }
 }
 
-static uint32_t allocate_free_cluster(uint8_t *fat, int fat_type, uint32_t total_clusters) {
+static uint32_t allocate_free_cluster(uint8_t *fat_buf, int fat_type, uint32_t total_clusters) {
     uint32_t c;
     for (c = 2; c < total_clusters + 2; c++) {
-        if (fat_get_entry(fat, fat_type, c) == 0) {
-            uint32_t eoc = (fat_type == 12) ? 0x0FFF : (fat_type == 16 ? 0xFFFF : 0x0FFFFFFF);
-            fat_set_entry(fat, fat_type, c, eoc);
+        if (fat_get_entry(fat_buf, fat_type, c) == 0) {
             return c;
         }
     }
-    return 0; /* Disk full */
+    return 0;
 }
 
-static void free_cluster_chain(uint8_t *fat, int fat_type, uint32_t start_clus) {
-    uint32_t cur = start_clus;
-    uint32_t eoc_threshold = (fat_type == 12) ? 0x0FF8 : (fat_type == 16 ? 0xFFF8 : 0x0FFFFFF8);
+static void free_cluster_chain(uint8_t *fat_buf, int fat_type, uint32_t start_cluster) {
+    uint32_t c = start_cluster;
+    uint32_t eoc = (fat_type == 12) ? 0x0FF8 : (fat_type == 16 ? 0xFFF8 : 0x0FFFFFF8);
+    uint32_t visited = 0;
 
-    while (cur >= 2 && cur < eoc_threshold) {
-        uint32_t next = fat_get_entry(fat, fat_type, cur);
-        fat_set_entry(fat, fat_type, cur, 0);
-        cur = next;
+    while (c >= 2 && c < eoc && visited++ < 65536) {
+        uint32_t next = fat_get_entry(fat_buf, fat_type, c);
+        fat_set_entry(fat_buf, fat_type, c, 0);
+        c = next;
     }
 }
 
-static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s -i <image_file> <source_file> ::<dest_filename>\n", prog);
-}
-
 int main(int argc, char **argv) {
-    const char *image_path = NULL;
-    const char *src_path = NULL;
-    const char *dest_name = NULL;
-    int i;
+    const char *img_path;
+    const char *src_path;
+    const char *dest_name;
     FILE *f_img;
     FILE *f_src;
-    long src_size;
-    uint8_t *src_data;
-    uint8_t boot_sec[SECTOR_SIZE];
+    uint8_t bpb[SECTOR_SIZE];
     uint16_t bytes_per_sec;
     uint8_t sec_per_clus;
     uint16_t rsvd_sec_cnt;
     uint8_t num_fats;
     uint16_t root_ent_cnt;
     uint16_t tot_sec_16;
-    uint16_t fat_sz_16;
     uint32_t tot_sec_32;
-    uint32_t fat_sz_32;
-    uint32_t root_clus;
     uint32_t fat_sz;
-    uint32_t tot_sec;
+    uint32_t root_clus;
+    uint32_t total_sec;
     uint32_t root_dir_sec;
     uint32_t data_sec;
     uint32_t total_clusters;
     int fat_type;
-    size_t fat_bytes;
-    uint8_t *fat_buf;
-    char target_83[11];
     uint32_t cluster_size;
+    uint32_t first_data_sec;
+    uint8_t *src_data;
+    long src_size;
+    uint8_t *fat_buf;
+    size_t fat_bytes;
     uint32_t clusters_needed;
     uint32_t first_cluster;
     uint32_t prev_cluster;
     uint32_t clus_idx;
-    uint32_t first_data_sec;
-    uint16_t dos_time;
-    uint16_t dos_date;
+    uint16_t dos_time, dos_date;
+    char target_83[11];
+    int num_lfn_slots;
+    int total_needed_slots;
 
-    for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
-            image_path = argv[++i];
-        } else if (argv[i][0] == '-') {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            print_usage(argv[0]);
-            return 1;
-        } else if (!src_path) {
-            src_path = argv[i];
-        } else if (!dest_name) {
-            dest_name = argv[i];
-        }
-    }
-
-    if (!image_path || !src_path || !dest_name) {
-        print_usage(argv[0]);
+    if (argc < 4) {
+        fprintf(stderr, "Usage: %s -i <image.img> <src_file> ::<dest_filename>\n", argv[0]);
         return 1;
     }
 
-    /* Clean destination filename */
-    while (*dest_name == ':') dest_name++;
+    img_path = argv[2];
+    src_path = argv[3];
+    dest_name = (argc >= 5) ? argv[4] : argv[3];
+
+    while (*dest_name == ':' || *dest_name == '/' || *dest_name == '\\') dest_name++;
+    if (strlen(dest_name) == 0) dest_name = "FILE.TXT";
+
+    num_lfn_slots = needs_lfn(dest_name) ? ((int)(strlen(dest_name) + 12) / 13) : 0;
+    total_needed_slots = num_lfn_slots + 1;
+
     convert_to_83(dest_name, target_83);
 
-    /* Read source file from host filesystem */
     f_src = fopen(src_path, "rb");
     if (!f_src) {
         perror("fopen src");
@@ -258,45 +358,39 @@ int main(int argc, char **argv) {
     }
     fclose(f_src);
 
-    /* Open disk image */
-    f_img = fopen(image_path, "r+b");
+    f_img = fopen(img_path, "r+b");
     if (!f_img) {
         perror("fopen img");
         if (src_data) free(src_data);
         return 1;
     }
 
-    /* Read BPB */
-    fseek(f_img, 0, SEEK_SET);
-    if (fread(boot_sec, 1, SECTOR_SIZE, f_img) != SECTOR_SIZE) {
+    if (fread(bpb, 1, SECTOR_SIZE, f_img) != SECTOR_SIZE) {
         perror("fread bpb");
         fclose(f_img);
         if (src_data) free(src_data);
         return 1;
     }
 
-    bytes_per_sec = rd_le16(&boot_sec[11]);
-    if (bytes_per_sec != SECTOR_SIZE) {
-        fprintf(stderr, "Error: Invalid sector size %u\n", bytes_per_sec);
-        fclose(f_img);
-        if (src_data) free(src_data);
-        return 1;
+    bytes_per_sec = rd_le16(&bpb[11]);
+    sec_per_clus = bpb[13];
+    rsvd_sec_cnt = rd_le16(&bpb[14]);
+    num_fats = bpb[16];
+    root_ent_cnt = rd_le16(&bpb[17]);
+    tot_sec_16 = rd_le16(&bpb[19]);
+    tot_sec_32 = rd_le32(&bpb[32]);
+    total_sec = (tot_sec_16 != 0) ? tot_sec_16 : tot_sec_32;
+
+    fat_sz = rd_le16(&bpb[22]);
+    if (fat_sz == 0) {
+        fat_sz = rd_le32(&bpb[36]);
+        root_clus = rd_le32(&bpb[44]);
+    } else {
+        root_clus = 0;
     }
 
-    sec_per_clus = boot_sec[13];
-    rsvd_sec_cnt = rd_le16(&boot_sec[14]);
-    num_fats = boot_sec[16];
-    root_ent_cnt = rd_le16(&boot_sec[17]);
-    tot_sec_16 = rd_le16(&boot_sec[19]);
-    fat_sz_16 = rd_le16(&boot_sec[22]);
-    tot_sec_32 = rd_le32(&boot_sec[32]);
-    fat_sz_32 = rd_le32(&boot_sec[36]);
-    root_clus = rd_le32(&boot_sec[44]);
-
-    root_dir_sec = ((root_ent_cnt * 32) + (SECTOR_SIZE - 1)) / SECTOR_SIZE;
-    fat_sz = (fat_sz_16 != 0) ? fat_sz_16 : fat_sz_32;
-    tot_sec = (tot_sec_16 != 0) ? tot_sec_16 : tot_sec_32;
-    data_sec = tot_sec - (rsvd_sec_cnt + (num_fats * fat_sz) + root_dir_sec);
+    root_dir_sec = (((uint32_t)root_ent_cnt * 32) + (bytes_per_sec - 1)) / bytes_per_sec;
+    data_sec = total_sec - (rsvd_sec_cnt + (num_fats * fat_sz) + root_dir_sec);
     total_clusters = data_sec / sec_per_clus;
 
     if (total_clusters < 4085) {
@@ -310,7 +404,6 @@ int main(int argc, char **argv) {
     cluster_size = sec_per_clus * SECTOR_SIZE;
     first_data_sec = rsvd_sec_cnt + (num_fats * fat_sz) + root_dir_sec;
 
-    /* Read FAT1 into memory */
     fat_bytes = fat_sz * SECTOR_SIZE;
     fat_buf = (uint8_t*)malloc(fat_bytes);
     if (!fat_buf) {
@@ -329,7 +422,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Allocate clusters for file data */
     clusters_needed = (src_size > 0) ? (uint32_t)((src_size + cluster_size - 1) / cluster_size) : 0;
     first_cluster = 0;
     prev_cluster = 0;
@@ -355,7 +447,6 @@ int main(int argc, char **argv) {
         }
         prev_cluster = c;
 
-        /* Write cluster data */
         {
             uint32_t sec_offset;
             long data_pos;
@@ -384,7 +475,6 @@ int main(int argc, char **argv) {
         fat_set_entry(fat_buf, fat_type, prev_cluster, eoc);
     }
 
-    /* Write updated FAT1 and FAT2 back to disk */
     fseek(f_img, (long)rsvd_sec_cnt * SECTOR_SIZE, SEEK_SET);
     fwrite(fat_buf, 1, fat_bytes, f_img);
     if (num_fats > 1) {
@@ -392,18 +482,17 @@ int main(int argc, char **argv) {
         fwrite(fat_buf, 1, fat_bytes, f_img);
     }
 
-    /* Update Root Directory Entry */
     get_dos_time(&dos_time, &dos_date);
 
     if (fat_type == 12 || fat_type == 16) {
-        /* FAT12 / FAT16 Fixed Root Directory */
         size_t root_dir_bytes = root_dir_sec * SECTOR_SIZE;
         uint8_t *root_buf = (uint8_t*)malloc(root_dir_bytes);
         long root_pos = (long)(rsvd_sec_cnt + num_fats * fat_sz) * SECTOR_SIZE;
         struct fat_dir_entry *entries;
         size_t max_entries;
         size_t ent_idx;
-        int found_slot = -1;
+        int run_start = -1;
+        int run_count = 0;
 
         if (!root_buf) {
             perror("malloc root_buf");
@@ -428,19 +517,15 @@ int main(int argc, char **argv) {
 
         for (ent_idx = 0; ent_idx < max_entries; ent_idx++) {
             if (entries[ent_idx].name[0] == 0x00 || (uint8_t)entries[ent_idx].name[0] == 0xE5) {
-                if (found_slot < 0) found_slot = (int)ent_idx;
-            } else if (memcmp(entries[ent_idx].name, target_83, 11) == 0) {
-                /* Existing file: overwrite */
-                uint32_t old_clus = entries[ent_idx].fst_clus_lo | ((uint32_t)entries[ent_idx].fst_clus_hi << 16);
-                if (old_clus != 0) {
-                    free_cluster_chain(fat_buf, fat_type, old_clus);
-                }
-                found_slot = (int)ent_idx;
-                break;
+                if (run_count == 0) run_start = (int)ent_idx;
+                run_count++;
+                if (run_count >= total_needed_slots) break;
+            } else {
+                run_count = 0;
             }
         }
 
-        if (found_slot < 0) {
+        if (run_count < total_needed_slots) {
             fprintf(stderr, "Error: Root directory is full!\n");
             free(root_buf);
             free(fat_buf);
@@ -449,22 +534,28 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        memset(&entries[found_slot], 0, sizeof(struct fat_dir_entry));
-        memcpy(entries[found_slot].name, target_83, 11);
-        entries[found_slot].attr = 0x20; /* Archive */
-        entries[found_slot].crt_time = dos_time;
-        entries[found_slot].crt_date = dos_date;
-        entries[found_slot].wrt_time = dos_time;
-        entries[found_slot].wrt_date = dos_date;
-        entries[found_slot].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
-        entries[found_slot].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
-        entries[found_slot].file_size = (uint32_t)src_size;
+        if (num_lfn_slots > 0) {
+            write_lfn_entries(entries, run_start, dest_name, target_83, num_lfn_slots);
+        }
+
+        {
+            int short_slot = run_start + num_lfn_slots;
+            memset(&entries[short_slot], 0, sizeof(struct fat_dir_entry));
+            memcpy(entries[short_slot].name, target_83, 11);
+            entries[short_slot].attr = 0x20;
+            entries[short_slot].crt_time = dos_time;
+            entries[short_slot].crt_date = dos_date;
+            entries[short_slot].wrt_time = dos_time;
+            entries[short_slot].wrt_date = dos_date;
+            entries[short_slot].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
+            entries[short_slot].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+            entries[short_slot].file_size = (uint32_t)src_size;
+        }
 
         fseek(f_img, root_pos, SEEK_SET);
         fwrite(root_buf, 1, root_dir_bytes, f_img);
         free(root_buf);
     } else {
-        /* FAT32 Root Directory (Cluster Chain starting at root_clus) */
         uint8_t *clus_buf = (uint8_t*)malloc(cluster_size);
         int entry_written = 0;
         uint32_t cur_clus = root_clus;
@@ -483,6 +574,8 @@ int main(int argc, char **argv) {
             struct fat_dir_entry *entries;
             size_t max_entries;
             size_t ent_idx;
+            int run_start = -1;
+            int run_count = 0;
 
             clus_pos = (long)(first_data_sec + (cur_clus - 2) * sec_per_clus) * SECTOR_SIZE;
             fseek(f_img, clus_pos, SEEK_SET);
@@ -493,49 +586,39 @@ int main(int argc, char **argv) {
 
             for (ent_idx = 0; ent_idx < max_entries; ent_idx++) {
                 if (entries[ent_idx].name[0] == 0x00 || (uint8_t)entries[ent_idx].name[0] == 0xE5) {
-                    memset(&entries[ent_idx], 0, sizeof(struct fat_dir_entry));
-                    memcpy(entries[ent_idx].name, target_83, 11);
-                    entries[ent_idx].attr = 0x20;
-                    entries[ent_idx].crt_time = dos_time;
-                    entries[ent_idx].crt_date = dos_date;
-                    entries[ent_idx].wrt_time = dos_time;
-                    entries[ent_idx].wrt_date = dos_date;
-                    entries[ent_idx].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
-                    entries[ent_idx].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
-                    entries[ent_idx].file_size = (uint32_t)src_size;
+                    if (run_count == 0) run_start = (int)ent_idx;
+                    run_count++;
+                    if (run_count >= total_needed_slots) {
+                        if (num_lfn_slots > 0) {
+                            write_lfn_entries(entries, run_start, dest_name, target_83, num_lfn_slots);
+                        }
+                        {
+                            int short_slot = run_start + num_lfn_slots;
+                            memset(&entries[short_slot], 0, sizeof(struct fat_dir_entry));
+                            memcpy(entries[short_slot].name, target_83, 11);
+                            entries[short_slot].attr = 0x20;
+                            entries[short_slot].crt_time = dos_time;
+                            entries[short_slot].crt_date = dos_date;
+                            entries[short_slot].wrt_time = dos_time;
+                            entries[short_slot].wrt_date = dos_date;
+                            entries[short_slot].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
+                            entries[short_slot].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+                            entries[short_slot].file_size = (uint32_t)src_size;
+                        }
 
-                    fseek(f_img, clus_pos, SEEK_SET);
-                    fwrite(clus_buf, 1, cluster_size, f_img);
-                    entry_written = 1;
-                    break;
-                } else if (memcmp(entries[ent_idx].name, target_83, 11) == 0) {
-                    /* Overwrite */
-                    uint32_t old_clus = entries[ent_idx].fst_clus_lo | ((uint32_t)entries[ent_idx].fst_clus_hi << 16);
-                    if (old_clus != 0) {
-                        free_cluster_chain(fat_buf, fat_type, old_clus);
+                        fseek(f_img, clus_pos, SEEK_SET);
+                        fwrite(clus_buf, 1, cluster_size, f_img);
+                        entry_written = 1;
+                        break;
                     }
-                    memset(&entries[ent_idx], 0, sizeof(struct fat_dir_entry));
-                    memcpy(entries[ent_idx].name, target_83, 11);
-                    entries[ent_idx].attr = 0x20;
-                    entries[ent_idx].crt_time = dos_time;
-                    entries[ent_idx].crt_date = dos_date;
-                    entries[ent_idx].wrt_time = dos_time;
-                    entries[ent_idx].wrt_date = dos_date;
-                    entries[ent_idx].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
-                    entries[ent_idx].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
-                    entries[ent_idx].file_size = (uint32_t)src_size;
-
-                    fseek(f_img, clus_pos, SEEK_SET);
-                    fwrite(clus_buf, 1, cluster_size, f_img);
-                    entry_written = 1;
-                    break;
+                } else {
+                    run_count = 0;
                 }
             }
 
             if (!entry_written) {
                 uint32_t next = fat_get_entry(fat_buf, fat_type, cur_clus);
                 if (next >= eoc_thresh) {
-                    /* Extend directory by 1 cluster */
                     uint32_t new_c = allocate_free_cluster(fat_buf, fat_type, total_clusters);
                     if (new_c == 0) {
                         fprintf(stderr, "Error: Disk full while extending root directory!\n");
@@ -544,23 +627,28 @@ int main(int argc, char **argv) {
                     fat_set_entry(fat_buf, fat_type, cur_clus, new_c);
                     fat_set_entry(fat_buf, fat_type, new_c, 0x0FFFFFFF);
 
-                    /* Zero new cluster */
                     memset(clus_buf, 0, cluster_size);
                     clus_pos = (long)(first_data_sec + (new_c - 2) * sec_per_clus) * SECTOR_SIZE;
                     fseek(f_img, clus_pos, SEEK_SET);
                     fwrite(clus_buf, 1, cluster_size, f_img);
 
-                    /* Write entry to first slot of new cluster */
                     entries = (struct fat_dir_entry*)(void*)clus_buf;
-                    memcpy(entries[0].name, target_83, 11);
-                    entries[0].attr = 0x20;
-                    entries[0].crt_time = dos_time;
-                    entries[0].crt_date = dos_date;
-                    entries[0].wrt_time = dos_time;
-                    entries[0].wrt_date = dos_date;
-                    entries[0].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
-                    entries[0].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
-                    entries[0].file_size = (uint32_t)src_size;
+                    if (num_lfn_slots > 0) {
+                        write_lfn_entries(entries, 0, dest_name, target_83, num_lfn_slots);
+                    }
+                    {
+                        int short_slot = num_lfn_slots;
+                        memset(&entries[short_slot], 0, sizeof(struct fat_dir_entry));
+                        memcpy(entries[short_slot].name, target_83, 11);
+                        entries[short_slot].attr = 0x20;
+                        entries[short_slot].crt_time = dos_time;
+                        entries[short_slot].crt_date = dos_date;
+                        entries[short_slot].wrt_time = dos_time;
+                        entries[short_slot].wrt_date = dos_date;
+                        entries[short_slot].fst_clus_lo = (uint16_t)(first_cluster & 0xFFFF);
+                        entries[short_slot].fst_clus_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+                        entries[short_slot].file_size = (uint32_t)src_size;
+                    }
 
                     fseek(f_img, clus_pos, SEEK_SET);
                     fwrite(clus_buf, 1, cluster_size, f_img);

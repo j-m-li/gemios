@@ -17,6 +17,23 @@
 #define FAT_ATTR_ARCHIVE   0x20
 #define FAT_ATTR_LFN       (FAT_ATTR_READ_ONLY | FAT_ATTR_HIDDEN | FAT_ATTR_SYSTEM | FAT_ATTR_VOLUME_ID)
 
+#define FAT_LFN_LAST_MASK  0x40
+#define FAT_LFN_SEQ_MASK   0x1F
+#define FAT_LFN_MAX_CHARS  255
+
+/* 32-byte FAT Long File Name (LFN) Directory Entry */
+struct fat_lfn_entry {
+    uint8_t  order;          /* Sequence number: bits 0-4 are sequence (1..31), bit 6 (0x40) is LAST_LFN_ENTRY */
+    uint8_t  name1[10];      /* Unicode UTF-16LE characters 1-5 (offset 1-10) */
+    uint8_t  attr;           /* Attributes: MUST BE 0x0F (FAT_ATTR_LFN) */
+    uint8_t  type;           /* Reserved/Type: 0x00 for LFN sub-component */
+    uint8_t  checksum;       /* Checksum of the 8.3 short filename alias */
+    uint8_t  name2[12];      /* Unicode UTF-16LE characters 6-11 (offset 14-25) */
+    uint8_t  fst_clus_lo[2]; /* First cluster low: MUST BE 0x0000 */
+    uint8_t  name3[4];       /* Unicode UTF-16LE characters 12-13 (offset 28-31) */
+};
+typedef struct fat_lfn_entry fat_lfn_entry_t;
+
 /* FAT Boot Sector / BPB */
 struct fat_bpb {
     uint8_t  jmp_boot[3];
