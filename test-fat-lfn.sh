@@ -61,6 +61,10 @@ check_pass "FAT32 LFN 'My Long Document 2026.txt' listed" "My Long Document 2026
 check_pass "FAT32 LFN 'Second Very Long Name.txt' listed" "Second Very Long Name.txt"
 check_pass "Successfully read LFN file contents" "GEMIOS VFAT / LFN implementation is active and functional!"
 check_pass "Created LFN directory 'Created Inside GEMIOS'" "Created Inside GEMIOS"
+check_pass "Copied 8.3 file via cp command" "Copied '/README.TXT' -> '/COPY.TXT'"
+check_pass "Read copied file contents" "COPY.TXT"
+check_pass "Copied LFN file via cp command" "Copied '/My Long Document 2026.txt' -> '/Doc Copy.txt'"
+check_pass "Read copied LFN file contents" "Doc Copy.txt"
 check_pass "Successfully removed LFN file" "Removed 'Second Very Long Name.txt'"
 
 if [ ${ERR} -eq 0 ]; then

@@ -85,6 +85,7 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  ls [dev] [dir]        - List directory contents on FAT (default: usb0)\n");
     kprintf("  cat [dev] <path>      - Read file content from FAT (default: usb0)\n");
     kprintf("  mkdir [dev] <dir>     - Create a directory in FAT filesystem\n");
+    kprintf("  cp [-r] [src] <dest>  - Copy files or directories on FAT filesystem\n");
     kprintf("  rm [-r] [dev] <path>  - Remove files or directories (e.g. rm -r *)\n");
     kprintf("  edit [dev] <path>     - Fullscreen MS-DOS style UTF-8 text editor\n");
     kprintf("  mouse                 - Show current mouse coordinates (PS/2 & USB)\n");
@@ -668,6 +669,176 @@ static void cmd_mkdir(int argc, char **argv) {
     }
 }
 
+static void parse_dev_and_filepath(const char *arg, const char *default_dev, const char *default_cwd,
+                                   char *out_dev, size_t dev_max, char *out_path, size_t path_max) {
+    const char *colon;
+    const char *rel_path;
+
+    strncpy(out_dev, default_dev, dev_max - 1);
+    out_dev[dev_max - 1] = '\0';
+
+    colon = strchr(arg, ':');
+    if (colon && colon != arg) {
+        size_t dev_len = (size_t)(colon - arg);
+        if (dev_len < dev_max) {
+            memcpy(out_dev, arg, dev_len);
+            out_dev[dev_len] = '\0';
+        }
+        rel_path = colon + 1;
+    } else {
+        rel_path = arg;
+    }
+
+    if (!rel_path || rel_path[0] == '\0') {
+        strncpy(out_path, default_cwd, path_max - 1);
+    } else if (rel_path[0] == '/' || rel_path[0] == '\\') {
+        strncpy(out_path, rel_path, path_max - 1);
+    } else {
+        if (strcmp(default_cwd, "/") == 0) {
+            snprintf(out_path, path_max, "/%s", rel_path);
+        } else {
+            snprintf(out_path, path_max, "%s/%s", default_cwd, rel_path);
+        }
+    }
+    out_path[path_max - 1] = '\0';
+}
+
+static void cmd_cp(int argc, char **argv) {
+    bool recursive = false;
+    char src_dev[32];
+    char dst_dev[32];
+    char src_path[256];
+    char dst_path[256];
+    const char *non_opts[8];
+    int non_opt_cnt = 0;
+    int i;
+    block_dev_t *src_bdev;
+    block_dev_t *dst_bdev;
+    fat_fs_t src_fs;
+    fat_fs_t dst_fs;
+    uint32_t src_size = 0;
+    uint8_t src_attr = 0;
+    int res;
+
+    for (i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            const char *opt = &argv[i][1];
+            while (*opt) {
+                if (*opt == 'r' || *opt == 'R') recursive = true;
+                opt++;
+            }
+        } else if (non_opt_cnt < 8) {
+            non_opts[non_opt_cnt++] = argv[i];
+        }
+    }
+
+    if (non_opt_cnt < 2) {
+        kprintf("Usage: cp [-r] [src_dev] <src_path> [dst_dev] <dst_path>\n");
+        kprintf("Examples:\n");
+        kprintf("  cp README.TXT BACKUP.TXT\n");
+        kprintf("  cp \"My Document.txt\" /DOCS/\n");
+        kprintf("  cp usb0 README.TXT usb0 BACKUP.TXT\n");
+        kprintf("  cp -r /FOLDER1 /FOLDER2\n");
+        return;
+    }
+
+    if (non_opt_cnt == 2) {
+        parse_dev_and_filepath(non_opts[0], g_shell_dev, g_shell_cwd, src_dev, sizeof(src_dev), src_path, sizeof(src_path));
+        parse_dev_and_filepath(non_opts[1], g_shell_dev, g_shell_cwd, dst_dev, sizeof(dst_dev), dst_path, sizeof(dst_path));
+    } else if (non_opt_cnt == 3) {
+        if (blockdev_get(non_opts[0]) != NULL) {
+            strncpy(src_dev, non_opts[0], sizeof(src_dev) - 1);
+            src_dev[sizeof(src_dev) - 1] = '\0';
+            strncpy(dst_dev, non_opts[0], sizeof(dst_dev) - 1);
+            dst_dev[sizeof(dst_dev) - 1] = '\0';
+            shell_build_path(non_opts[1], src_path, sizeof(src_path));
+            shell_build_path(non_opts[2], dst_path, sizeof(dst_path));
+        } else if (blockdev_get(non_opts[1]) != NULL) {
+            parse_dev_and_filepath(non_opts[0], g_shell_dev, g_shell_cwd, src_dev, sizeof(src_dev), src_path, sizeof(src_path));
+            strncpy(dst_dev, non_opts[1], sizeof(dst_dev) - 1);
+            dst_dev[sizeof(dst_dev) - 1] = '\0';
+            shell_build_path(non_opts[2], dst_path, sizeof(dst_path));
+        } else {
+            parse_dev_and_filepath(non_opts[0], g_shell_dev, g_shell_cwd, src_dev, sizeof(src_dev), src_path, sizeof(src_path));
+            parse_dev_and_filepath(non_opts[1], g_shell_dev, g_shell_cwd, dst_dev, sizeof(dst_dev), dst_path, sizeof(dst_path));
+        }
+    } else {
+        strncpy(src_dev, non_opts[0], sizeof(src_dev) - 1);
+        src_dev[sizeof(src_dev) - 1] = '\0';
+        shell_build_path(non_opts[1], src_path, sizeof(src_path));
+        strncpy(dst_dev, non_opts[2], sizeof(dst_dev) - 1);
+        dst_dev[sizeof(dst_dev) - 1] = '\0';
+        shell_build_path(non_opts[3], dst_path, sizeof(dst_path));
+    }
+
+    src_bdev = blockdev_get(src_dev);
+    if (!src_bdev) {
+        kprint_color(0x4F, "Block device '%s' not found.\n", src_dev);
+        return;
+    }
+
+    dst_bdev = blockdev_get(dst_dev);
+    if (!dst_bdev) {
+        kprint_color(0x4F, "Block device '%s' not found.\n", dst_dev);
+        return;
+    }
+
+    if (fat_mount(src_bdev, &src_fs) != 0) {
+        kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", src_dev);
+        return;
+    }
+
+    if (src_bdev == dst_bdev) {
+        dst_fs = src_fs;
+    } else {
+        if (fat_mount(dst_bdev, &dst_fs) != 0) {
+            kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dst_dev);
+            return;
+        }
+    }
+
+    if (fat_stat(&src_fs, src_path, &src_size, &src_attr) != 0) {
+        kprint_color(0x4F, "cp: cannot stat '%s': No such file or directory\n", src_path);
+        return;
+    }
+
+    /* If destination is a directory or path ends with '/', append source basename */
+    if (fat_is_dir(&dst_fs, dst_path) == 1 || dst_path[strlen(dst_path) - 1] == '/') {
+        const char *base = strrchr(src_path, '/');
+        if (!base) base = strrchr(src_path, '\\');
+        base = (base) ? base + 1 : src_path;
+
+        size_t dlen = strlen(dst_path);
+        if (dlen > 0 && dst_path[dlen - 1] == '/') {
+            strncat(dst_path, base, sizeof(dst_path) - dlen - 1);
+        } else {
+            strncat(dst_path, "/", sizeof(dst_path) - dlen - 1);
+            strncat(dst_path, base, sizeof(dst_path) - strlen(dst_path) - 1);
+        }
+    }
+
+    if (src_attr & FAT_ATTR_DIRECTORY) {
+        if (!recursive) {
+            kprint_color(0x4F, "cp: -r not specified; omitting directory '%s'\n", src_path);
+            return;
+        }
+        res = fat_copy_dir(&src_fs, src_path, &dst_fs, dst_path);
+        if (res == 0) {
+            kprint_color(0x0A, "Copied directory '%s' -> '%s' on '%s'.\n", src_path, dst_path, dst_dev);
+        } else {
+            kprint_color(0x4F, "Failed to copy directory '%s' to '%s' (code %d).\n", src_path, dst_path, res);
+        }
+        return;
+    }
+
+    res = fat_copy_file(&src_fs, src_path, &dst_fs, dst_path);
+    if (res == 0) {
+        kprint_color(0x0A, "Copied '%s' -> '%s' (%u bytes)\n", src_path, dst_path, src_size);
+    } else {
+        kprint_color(0x4F, "Failed to copy '%s' to '%s' (code %d).\n", src_path, dst_path, res);
+    }
+}
+
 static void cmd_rm(int argc, char **argv) {
     bool recursive;
     bool force;
@@ -947,6 +1118,7 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "ls") == 0 || strcmp(argv[0], "fatls") == 0) cmd_ls(argc, argv);
     else if (strcmp(argv[0], "cat") == 0 || strcmp(argv[0], "fatcat") == 0) cmd_cat(argc, argv);
     else if (strcmp(argv[0], "mkdir") == 0 || strcmp(argv[0], "fatmkdir") == 0) cmd_mkdir(argc, argv);
+    else if (strcmp(argv[0], "cp") == 0 || strcmp(argv[0], "fatcp") == 0) cmd_cp(argc, argv);
     else if (strcmp(argv[0], "rm") == 0) cmd_rm(argc, argv);
     else if (strcmp(argv[0], "edit") == 0) cmd_edit(argc, argv);
     else if (strcmp(argv[0], "mouse") == 0) cmd_mouse(argc, argv);

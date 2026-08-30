@@ -38,6 +38,10 @@ commands = [
     'cat usb0 "Second Very Long Name.txt"',
     'mkdir usb0 "Created Inside GEMIOS"',
     'ls usb0',
+    'cp README.TXT COPY.TXT',
+    'cat COPY.TXT',
+    'cp "My Long Document 2026.txt" "Doc Copy.txt"',
+    'cat "Doc Copy.txt"',
     'rm usb0 "Second Very Long Name.txt"',
     'ls usb0'
 ]
@@ -52,8 +56,6 @@ for cmd_text in commands:
             proc.stdin.write('sendkey slash\n')
         elif ch == '-':
             proc.stdin.write('sendkey minus\n')
-        elif ch == '_':
-            proc.stdin.write('sendkey shift-minus\n')
         elif ch == '"':
             proc.stdin.write('sendkey shift-apostrophe\n')
         elif ch >= 'A' and ch <= 'Z':
@@ -61,10 +63,10 @@ for cmd_text in commands:
         else:
             proc.stdin.write(f'sendkey {ch}\n')
         proc.stdin.flush()
-        time.sleep(0.04)
+        time.sleep(0.05)
     proc.stdin.write('sendkey ret\n')
     proc.stdin.flush()
-    time.sleep(0.5)
+    time.sleep(0.6)
 
 time.sleep(1.5)
 proc.terminate()

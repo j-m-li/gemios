@@ -118,5 +118,8 @@ int fat_write_file(fat_fs_t *fs, const char *path, const void *buf, size_t len);
 int fat_mkdir(fat_fs_t *fs, const char *path);
 int fat_remove(fat_fs_t *fs, const char *path, bool recursive);
 int fat_delete_file(fat_fs_t *fs, const char *path);
+int fat_stat(fat_fs_t *fs, const char *path, uint32_t *out_size, uint8_t *out_attr);
+int fat_copy_file(fat_fs_t *src_fs, const char *src_path, fat_fs_t *dst_fs, const char *dst_path);
+int fat_copy_dir(fat_fs_t *src_fs, const char *src_path, fat_fs_t *dst_fs, const char *dst_path);
 
 #endif /* GEMIOS_FAT_H */
