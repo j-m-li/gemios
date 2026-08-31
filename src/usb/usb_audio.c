@@ -1205,6 +1205,7 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
     uint32_t read_ring_idx;
     uint32_t start_frame;
     uint32_t t_start;
+    uint32_t d;
     uint8_t *dst = (uint8_t*)pcm_data;
 
     if (!audio || !audio->initialized || !pcm_data || max_bytes == 0 || !out_bytes) return -1;
@@ -1271,8 +1272,8 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
     t_start = rtos_get_ticks();
     read_ring_idx = ring->enqueue_idx;
 
-    /* Pre-buffer initial Isoch IN TRBs (using SIA = true for IN capture) */
-    while (queued_frames < 64 && queued_frames < target_frames) {
+    /* Pre-buffer initial Isoch IN TRBs (256ms cushion) */
+    while (queued_frames < 256 && queued_frames < target_frames) {
         uint32_t ring_idx = ring->enqueue_idx;
         uint8_t *dma_buf;
 
@@ -1285,17 +1286,17 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
     }
     xhci_ring_doorbell(ctrl, audio->slot_id, audio->as_in_ep_dci);
 
-    /* Capture loop: keep queuing ahead while collecting completed frames */
+    /* Capture loop: keep queuing ahead by 512 frames while collecting completed frames */
     while (collected_frames < target_frames) {
         uint32_t elapsed = rtos_get_ticks() - t_start;
         bool doorbell_needed = false;
 
-        if (elapsed > duration_ms + 2500) break; /* Timeout safeguard */
+        if (elapsed > duration_ms + 3000) break; /* Timeout safeguard */
 
         xhci_poll();
 
-        /* Keep ring queued ahead by 64 frames */
-        while (queued_frames < target_frames && (queued_frames - collected_frames) < 64) {
+        /* Maintain 512ms buffer cushion in physical xHCI ring */
+        while (queued_frames < target_frames && (queued_frames - collected_frames) < 512) {
             uint32_t ring_idx = ring->enqueue_idx;
             uint8_t *dma_buf;
 
@@ -1327,17 +1328,21 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
         rtos_sleep_ms(1);
     }
 
-    /* Drain any remaining tail frames */
-    xhci_poll();
-    while (read_ring_idx != ring->dequeue_idx && collected_frames < target_frames) {
-        uint8_t *dma_buf = g_isoch_in_pool[read_ring_idx];
-        if (*out_bytes + bytes_per_ms <= max_bytes) {
-            memcpy(dst + *out_bytes, dma_buf, bytes_per_ms);
-            *out_bytes += bytes_per_ms;
+    /* Drain any remaining tail frames confirmed by hardware */
+    for (d = 0; d < 20 && collected_frames < target_frames; d++) {
+        xhci_poll();
+        while (read_ring_idx != ring->dequeue_idx && collected_frames < target_frames) {
+            uint8_t *dma_buf = g_isoch_in_pool[read_ring_idx];
+            if (*out_bytes + bytes_per_ms <= max_bytes) {
+                memcpy(dst + *out_bytes, dma_buf, bytes_per_ms);
+                *out_bytes += bytes_per_ms;
+            }
+            collected_frames++;
+            read_ring_idx++;
+            if (read_ring_idx >= ring->size - 1) read_ring_idx = 0;
         }
-        collected_frames++;
-        read_ring_idx++;
-        if (read_ring_idx >= ring->size - 1) read_ring_idx = 0;
+        if (read_ring_idx == ring->dequeue_idx) break;
+        rtos_sleep_ms(2);
     }
 
     if (cur_task) {
@@ -1407,33 +1412,19 @@ int usb_audio_record_wav_file(const char *dev_name, const char *path, uint32_t d
         return -1;
     }
 
-    /* Compute Peak Amplitude and Normalize Gain */
+    /* Compute Peak Amplitude */
     int32_t peak = 0;
     size_t num_s = recorded_bytes / sizeof(int16_t);
-    int16_t *s16 = (int16_t*)pcm_buf;
+    const int16_t *s16 = (const int16_t*)pcm_buf;
     size_t s;
     for (s = 0; s < num_s; s++) {
         int32_t v = s16[s];
         if (v < 0) v = -v;
         if (v > peak) peak = v;
     }
-    kprintf("[Audio] Microphone captured %u ms. Raw Peak amplitude: %d / 32768\n",
+    kprintf("[Audio] Microphone captured %u ms. Peak amplitude: %d / 32768\n",
             (uint32_t)((recorded_bytes * 1000) / ((size_t)audio->in_sample_rate * audio->in_channels * (audio->in_bits_per_sample / 8))),
             (int)peak);
-
-    /* If recorded audio is quiet (peak < 22000), apply auto-gain normalization */
-    if (peak > 100 && peak < 22000) {
-        int32_t gain_fp = (24000 * 256) / peak; /* Target 75% full scale */
-        if (gain_fp > 4096) gain_fp = 4096; /* Cap at 16x gain boost */
-        for (s = 0; s < num_s; s++) {
-            int32_t boosted = ((int32_t)s16[s] * gain_fp) >> 8;
-            if (boosted > 32767) boosted = 32767;
-            else if (boosted < -32768) boosted = -32768;
-            s16[s] = (int16_t)boosted;
-        }
-        kprintf("[Audio] Auto-normalized microphone gain (+%d dB boost, peak %d -> 24000).\n",
-                (int)((gain_fp * 6) / 512), (int)peak);
-    }
 
     /* Construct 44-byte WAV header */
     uint32_t sample_rate = audio->in_sample_rate;
