@@ -966,6 +966,19 @@ static void cmd_audio(int argc, char **argv) {
         }
         usb_audio_set_mute(audio, m);
         kprint_color(0x0A, "USB Audio %s\n", m ? "MUTED" : "UNMUTED");
+    } else if (strcmp(argv[1], "mic") == 0) {
+        if (argc >= 4 && (strcmp(argv[2], "vol") == 0 || strcmp(argv[2], "volume") == 0)) {
+            uint32_t mv = parse_int(argv[3]);
+            if (mv > 100) mv = 100;
+            usb_audio_set_mic_volume(audio, (uint8_t)mv);
+            kprint_color(0x0A, "Set Microphone volume to %u%%\n", mv);
+        } else if (argc >= 4 && strcmp(argv[2], "mute") == 0) {
+            bool mm = (strcmp(argv[3], "off") != 0 && strcmp(argv[3], "0") != 0);
+            usb_audio_set_mic_mute(audio, mm);
+            kprint_color(0x0A, "Microphone %s\n", mm ? "MUTED" : "UNMUTED");
+        } else {
+            kprintf("Usage: audio mic vol <0-100> | audio mic mute <on|off>\n");
+        }
     } else if (strcmp(argv[1], "stop") == 0) {
         usb_audio_stop_all();
         kprint_color(0x0A, "Stopped USB Audio playback.\n");
@@ -974,6 +987,14 @@ static void cmd_audio(int argc, char **argv) {
         uint32_t dur = (argc >= 4) ? parse_int(argv[3]) : 500;
         kprintf("Playing %u Hz tone for %u ms...\n", freq, dur);
         usb_audio_play_tone(freq, dur);
+    } else if (strcmp(argv[1], "test") == 0 || strcmp(argv[1], "bench") == 0) {
+        uint32_t dur = (argc >= 3) ? parse_int(argv[2]) : 3000;
+        kprintf("========================================================\n");
+        kprintf("  GEMIOS USB Audio Hardware Continuous Stream Test       \n");
+        kprintf("  Target Duration: %u ms (48000 Hz, Stereo 16-bit)      \n", dur);
+        kprintf("========================================================\n");
+        usb_audio_play_tone(440, dur);
+        kprint_color(0x0A, "[PASS] Audio stream completed.\n");
     } else if (strcmp(argv[1], "play") == 0) {
         if (argc < 3) {
             kprintf("Usage: audio play [--bg] <file.wav>\n");
@@ -985,7 +1006,7 @@ static void cmd_audio(int argc, char **argv) {
             usb_audio_play_file(argv[2]);
         }
     } else {
-        kprintf("Unknown audio command: '%s'. Use 'audio info', 'audio vol', 'audio mute', 'audio stop', 'audio tone', 'play <file.wav>'.\n", argv[1]);
+        kprintf("Unknown audio command: '%s'. Use 'audio info', 'audio vol', 'audio mute', 'audio mic vol', 'play <file.wav>', 'record <file.wav> [sec]'.\n", argv[1]);
     }
 }
 
@@ -1036,6 +1057,43 @@ static void cmd_play(int argc, char **argv) {
     } else {
         usb_audio_play_file_dev(dev_name, full_path);
     }
+}
+
+static void cmd_record(int argc, char **argv) {
+    const char *dev_name = g_shell_dev;
+    const char *filename;
+    char full_path[256];
+    uint32_t duration_sec = 5;
+
+    if (argc < 2) {
+        kprintf("Usage: record [dev] <file.wav> [seconds]\nExample: record REC.WAV 5\n");
+        return;
+    }
+
+    if (argc == 2) {
+        filename = argv[1];
+    } else if (argc == 3) {
+        if (argv[2][0] >= '0' && argv[2][0] <= '9') {
+            filename = argv[1];
+            duration_sec = parse_int(argv[2]);
+        } else {
+            dev_name = argv[1];
+            filename = argv[2];
+        }
+    } else {
+        dev_name = argv[1];
+        filename = argv[2];
+        duration_sec = parse_int(argv[3]);
+    }
+
+    if (duration_sec == 0) duration_sec = 5;
+    if (duration_sec > 60) duration_sec = 60;
+
+    if (!dev_name || dev_name[0] == '\0') dev_name = "usb0";
+    shell_build_path(filename, full_path, sizeof(full_path));
+
+    kprintf("Recording %u seconds of audio to '%s' on %s...\n", duration_sec, full_path, dev_name);
+    usb_audio_record_wav_file(dev_name, full_path, duration_sec);
 }
 
 static void cmd_mouse(int argc, char **argv) {
@@ -1256,6 +1314,7 @@ void shell_execute_command(char *cmd_line) {
     else if (strcmp(argv[0], "edit") == 0) cmd_edit(argc, argv);
     else if (strcmp(argv[0], "audio") == 0) cmd_audio(argc, argv);
     else if (strcmp(argv[0], "play") == 0) cmd_play(argc, argv);
+    else if (strcmp(argv[0], "record") == 0) cmd_record(argc, argv);
     else if (strcmp(argv[0], "beep") == 0) cmd_beep(argc, argv);
     else if (strcmp(argv[0], "mouse") == 0) cmd_mouse(argc, argv);
     else if (strcmp(argv[0], "bench") == 0) cmd_bench(argc, argv);

@@ -104,6 +104,20 @@ typedef struct {
     bool stream_active;
     bool initialized;
     audio_triple_buffer_t tb;  /* Triple buffer subsystem */
+
+    /* Capture (Microphone) properties */
+    bool has_capture;
+    uint8_t as_in_iface;       /* Audio Streaming Capture Interface number (e.g. 2) */
+    uint8_t as_in_alt;         /* Alternate setting with endpoint (e.g. 1) */
+    uint8_t as_in_ep_addr;     /* Endpoint address (e.g. 0x82) */
+    uint8_t as_in_ep_dci;      /* xHCI DCI (e.g. 5) */
+    uint16_t as_in_max_packet; /* Max packet size (e.g. 100) */
+    uint8_t mic_feature_unit_id; /* Feature Unit ID for Mic volume/mute (e.g. 10 for 0d8c:0014) */
+    uint32_t in_sample_rate;   /* 48000 Hz default */
+    uint8_t in_channels;       /* 1 (Mono) */
+    uint8_t in_bits_per_sample;/* 16-bit */
+    uint8_t mic_volume_percent;/* 0 - 100% */
+    bool mic_is_muted;
 } usb_audio_device_t;
 
 void usb_audio_init(void);
@@ -115,6 +129,11 @@ usb_audio_device_t *usb_audio_get_device(size_t index);
 int usb_audio_set_volume(usb_audio_device_t *audio, uint8_t vol_percent);
 int usb_audio_set_mute(usb_audio_device_t *audio, bool mute);
 int usb_audio_set_sample_rate(usb_audio_device_t *audio, uint32_t sample_rate);
+
+/* Microphone Controls */
+int usb_audio_set_mic_volume(usb_audio_device_t *audio, uint8_t vol_percent);
+int usb_audio_set_mic_mute(usb_audio_device_t *audio, bool mute);
+int usb_audio_set_mic_sample_rate(usb_audio_device_t *audio, uint32_t sample_rate);
 
 /* Triple Buffering Streaming API */
 int usb_audio_stream_start(usb_audio_device_t *audio, uint32_t sample_rate, uint8_t channels, uint8_t bits);
@@ -133,5 +152,9 @@ int usb_audio_play_file_dev(const char *dev_name, const char *path);
 int usb_audio_play_file_async(const char *path);
 int usb_audio_play_file_dev_async(const char *dev_name, const char *path);
 void usb_audio_stop_all(void);
+
+/* Audio Recording API */
+int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_bytes, uint32_t duration_ms, size_t *out_bytes);
+int usb_audio_record_wav_file(const char *dev_name, const char *path, uint32_t duration_sec);
 
 #endif /* GEMIOS_USB_AUDIO_H */

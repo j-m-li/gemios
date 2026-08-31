@@ -120,20 +120,30 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
                 uint8_t subtype = p[2];
                 if (subtype == UAC_AC_FEATURE_UNIT) {
                     uint8_t uid = p[3];
-                    /* Prefer Unit 9 for playback, or first Feature Unit encountered */
+                    /* Prefer Unit 9 for playback, Unit 10 for mic */
                     if (feature_unit_id == 0 || uid == 9) {
                         feature_unit_id = uid;
                     }
                 }
             } else if (type == USB_DESC_ENDPOINT) {
                 usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t*)p;
-                if ((ep->bEndpointAddress & USB_DIR_IN) == 0 && (ep->bmAttributes & 0x03) == 1) {
-                    /* Isochronous OUT endpoint found - bind interface & alt setting */
-                    out_ep_addr = ep->bEndpointAddress;
-                    out_ep_max_packet = ep->wMaxPacketSize;
-                    out_ep_dci = (out_ep_addr & 0x0F) * 2;
-                    as_out_iface_num = cur_iface_num;
-                    as_out_alt_setting = (cur_alt_num > 0) ? cur_alt_num : 1;
+                if ((ep->bmAttributes & 0x03) == 1) { /* Isochronous */
+                    if ((ep->bEndpointAddress & USB_DIR_IN) == 0) {
+                        /* Isochronous OUT endpoint found - bind interface & alt setting */
+                        out_ep_addr = ep->bEndpointAddress;
+                        out_ep_max_packet = ep->wMaxPacketSize;
+                        out_ep_dci = (out_ep_addr & 0x0F) * 2;
+                        as_out_iface_num = cur_iface_num;
+                        as_out_alt_setting = (cur_alt_num > 0) ? cur_alt_num : 1;
+                    } else {
+                        /* Isochronous IN endpoint found (Capture / Microphone) */
+                        audio->as_in_ep_addr = ep->bEndpointAddress;
+                        audio->as_in_max_packet = ep->wMaxPacketSize;
+                        audio->as_in_ep_dci = (audio->as_in_ep_addr & 0x0F) * 2 + 1;
+                        audio->as_in_iface = cur_iface_num;
+                        audio->as_in_alt = (cur_alt_num > 0) ? cur_alt_num : 1;
+                        audio->has_capture = true;
+                    }
                 }
             }
 
@@ -148,6 +158,14 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
         out_ep_max_packet = 200;
         as_out_iface_num = 1;
         as_out_alt_setting = 1;
+    }
+    if (audio->as_in_ep_addr == 0) {
+        audio->as_in_ep_addr = 0x82;
+        audio->as_in_ep_dci = 5;
+        audio->as_in_max_packet = 100;
+        audio->as_in_iface = 2;
+        audio->as_in_alt = 1;
+        audio->has_capture = true;
     }
     if (feature_unit_id == 0) {
         feature_unit_id = 9;
@@ -165,6 +183,14 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
     audio->bits_per_sample = 16;
     audio->volume_percent = 90;
     audio->is_muted = false;
+
+    audio->mic_feature_unit_id = 10;
+    audio->in_sample_rate = 48000;
+    audio->in_channels = 1;
+    audio->in_bits_per_sample = 16;
+    audio->mic_volume_percent = 100;
+    audio->mic_is_muted = false;
+
     audio->initialized = true;
 
     g_num_audio_devs++;
@@ -184,8 +210,9 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
     usb_audio_set_volume(audio, 90);
     usb_audio_set_mute(audio, false);
 
-    kprint_color(0x0A, "[Audio] Bound %s on Slot %u (48kHz/16-bit Stereo, EP 0x%02x DCI %u)\n",
-                 dev->name, audio->slot_id, audio->as_out_ep_addr, audio->as_out_ep_dci);
+    kprint_color(0x0A, "[Audio] Bound %s on Slot %u (Playback: 48kHz Stereo EP 0x%02x DCI %u | Mic: 48kHz Mono EP 0x%02x DCI %u)\n",
+                 dev->name, audio->slot_id, audio->as_out_ep_addr, audio->as_out_ep_dci,
+                 audio->as_in_ep_addr, audio->as_in_ep_dci);
 
     return 0;
 }
@@ -210,6 +237,69 @@ int usb_audio_set_sample_rate(usb_audio_device_t *audio, uint32_t sample_rate) {
         audio->sample_rate = sample_rate;
     }
     return res;
+}
+
+int usb_audio_set_mic_sample_rate(usb_audio_device_t *audio, uint32_t sample_rate) {
+    uint8_t freq_bytes[3];
+    int res;
+
+    if (!audio || !audio->dev || !audio->initialized) return -1;
+
+    freq_bytes[0] = (uint8_t)(sample_rate & 0xFF);
+    freq_bytes[1] = (uint8_t)((sample_rate >> 8) & 0xFF);
+    freq_bytes[2] = (uint8_t)((sample_rate >> 16) & 0xFF);
+
+    res = usb_control_msg(audio->dev,
+                          USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_ENDPOINT,
+                          UAC_REQ_SET_CUR,
+                          (UAC_EP_CONTROL_SAMPLING_FREQ << 8) | 0,
+                          audio->as_in_ep_addr,
+                          freq_bytes, 3);
+    if (res == 0) {
+        audio->in_sample_rate = sample_rate;
+    }
+    return res;
+}
+
+int usb_audio_set_mic_volume(usb_audio_device_t *audio, uint8_t vol_percent) {
+    int16_t vol_db;
+    uint8_t fu;
+
+    if (!audio || !audio->dev || !audio->initialized) return -1;
+    if (vol_percent > 100) vol_percent = 100;
+
+    /* C-Media CM108 Mic Preamp: 0 dB to +23 dB (0x0000 to 0x1700) */
+    if (vol_percent == 0) {
+        vol_db = (int16_t)0x8000;
+    } else {
+        vol_db = (int16_t)(((int32_t)vol_percent * 5888) / 100);
+    }
+
+    fu = audio->mic_feature_unit_id ? audio->mic_feature_unit_id : 10;
+
+    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_VOLUME << 8) | 0, (fu << 8) | audio->ac_iface, &vol_db, 2);
+    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_VOLUME << 8) | 1, (fu << 8) | audio->ac_iface, &vol_db, 2);
+
+    audio->mic_volume_percent = vol_percent;
+    return 0;
+}
+
+int usb_audio_set_mic_mute(usb_audio_device_t *audio, bool mute) {
+    uint8_t m_val = mute ? 1 : 0;
+    uint8_t fu;
+
+    if (!audio || !audio->dev || !audio->initialized) return -1;
+    fu = audio->mic_feature_unit_id ? audio->mic_feature_unit_id : 10;
+
+    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_MUTE << 8) | 0, (fu << 8) | audio->ac_iface, &m_val, 1);
+    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_MUTE << 8) | 1, (fu << 8) | audio->ac_iface, &m_val, 1);
+
+    audio->mic_is_muted = mute;
+    return 0;
 }
 
 int usb_audio_set_volume(usb_audio_device_t *audio, uint8_t vol_percent) {
@@ -528,86 +618,118 @@ bool usb_audio_is_playing(usb_audio_device_t *audio) {
 
 int usb_audio_play_pcm(usb_audio_device_t *audio, const void *pcm_data, size_t len, uint32_t sample_rate, uint8_t channels, uint8_t bits) {
     xhci_controller_t *ctrl;
-    size_t bytes_per_sec;
+    xhci_ring_t *ring;
+    const uint8_t *src;
+    size_t remaining;
     size_t bytes_per_ms;
-    size_t offset;
     uint32_t buf_idx = 0;
-    uint32_t t_start;
+    task_t *cur_task;
+    uint8_t old_prio = RTOS_PRIORITY_NORMAL;
+    uint32_t underrun_count = 0;
+    uint32_t min_queued = 0xFFFFFFFF;
+    uint32_t max_queued = 0;
     uint32_t start_frame;
+    uint32_t t_drain;
     int z;
 
     if (!audio || !audio->initialized || !pcm_data || len == 0) return -1;
     ctrl = xhci_get_controller();
     if (!ctrl) return -1;
+    ring = &ctrl->slots[audio->slot_id].ep_rings[audio->as_out_ep_dci];
+    if (!ring || ring->size == 0) return -1;
+
+    cur_task = rtos_current_task();
+    if (cur_task) {
+        old_prio = cur_task->base_priority;
+        cur_task->priority = RTOS_PRIORITY_REALTIME;
+        cur_task->base_priority = RTOS_PRIORITY_REALTIME;
+    }
 
     if (sample_rate != audio->sample_rate && sample_rate > 0) {
         usb_audio_set_sample_rate(audio, sample_rate);
     }
 
     /* 48000 Hz, 16-bit (2 bytes), stereo (2 channels) -> 192 bytes/ms */
-    bytes_per_sec = (size_t)audio->sample_rate * channels * (bits / 8);
-    bytes_per_ms = bytes_per_sec / 1000;
+    bytes_per_ms = (size_t)audio->sample_rate * channels * (bits / 8) / 1000;
     if (bytes_per_ms == 0 || bytes_per_ms > ISOCH_FRAME_MAX) bytes_per_ms = 192;
 
-    /* Synchronize with hardware xHCI microframe clock, schedule start 16ms in advance */
-    start_frame = (xhci_get_current_frame(ctrl) + 16) & 0x7FF;
+    src = (const uint8_t*)pcm_data;
+    remaining = len;
 
-    t_start = rtos_get_ticks();
-    offset = 0;
-    while (offset < len) {
-        uint32_t elapsed_ms = rtos_get_ticks() - t_start;
-        uint32_t target_frames = elapsed_ms + 1024; /* Maintain 1024ms deep lookahead buffer */
-        bool doorbell_needed = false;
+    /* Synchronize start with hardware xHCI microframe clock, schedule start 32ms in advance */
+    start_frame = (xhci_get_current_frame(ctrl) + 32) & 0x7FF;
 
+    while (remaining > 0) {
+        uint32_t queued;
         xhci_poll();
+        queued = xhci_get_ring_queued_count(ctrl, audio->slot_id, audio->as_out_ep_dci);
 
-        /* Enqueue frames until target buffer depth is reached */
-        while (buf_idx < target_frames && offset < len) {
-            size_t chunk = len - offset;
+        if (buf_idx > 64) {
+            if (queued == 0) underrun_count++;
+            if (queued < min_queued) min_queued = queued;
+            if (queued > max_queued) max_queued = queued;
+        }
+
+        /* Maintain ~512ms queue depth in physical DMA ring based on completion events */
+        while (queued < 512 && remaining > 0) {
+            size_t chunk = (remaining < bytes_per_ms) ? remaining : bytes_per_ms;
+            uint32_t ring_idx = ring->enqueue_idx;
             uint8_t *dma_buf;
             uint32_t frame_id = (start_frame + buf_idx) & 0x7FF;
-            bool ioc = ((buf_idx % 16) == 0) || (offset + chunk >= len);
+            bool ioc;
 
-            if (chunk > bytes_per_ms) chunk = bytes_per_ms;
+            if (ring_idx >= ISOCH_DMA_BUFFERS - 1) ring_idx = 0;
+            dma_buf = g_isoch_pool[ring_idx];
 
-            dma_buf = g_isoch_pool[buf_idx % ISOCH_DMA_BUFFERS];
             memset(dma_buf, 0, ISOCH_FRAME_MAX);
-            memcpy(dma_buf, (const uint8_t*)pcm_data + offset, chunk);
+            memcpy(dma_buf, src, chunk);
+            src += chunk;
+            remaining -= chunk;
 
+            ioc = true;
+            /* Use exact Frame ID matching hardware microframe clock (sia = false) */
             xhci_isoch_transfer_frame(ctrl, audio->slot_id, audio->as_out_ep_dci, dma_buf, (uint32_t)bytes_per_ms, frame_id, false, ioc);
-
             buf_idx++;
-            offset += chunk;
-            doorbell_needed = true;
+            queued++;
         }
 
-        if (doorbell_needed) {
-            xhci_ring_doorbell(ctrl, audio->slot_id, audio->as_out_ep_dci);
-        }
+        xhci_ring_doorbell(ctrl, audio->slot_id, audio->as_out_ep_dci);
 
-        if (offset < len) {
-            rtos_sleep_ms(10);
+        if (remaining > 0) {
+            rtos_sleep_ms(1);
         }
     }
 
     /* Send smooth zero termination frames */
     for (z = 0; z < 8; z++) {
-        uint8_t *dma_buf = g_isoch_pool[buf_idx % ISOCH_DMA_BUFFERS];
+        uint32_t ring_idx = ring->enqueue_idx;
+        uint8_t *dma_buf;
         uint32_t frame_id = (start_frame + buf_idx) & 0x7FF;
+        if (ring_idx >= ISOCH_DMA_BUFFERS - 1) ring_idx = 0;
+        dma_buf = g_isoch_pool[ring_idx];
         memset(dma_buf, 0, ISOCH_FRAME_MAX);
         xhci_isoch_transfer_frame(ctrl, audio->slot_id, audio->as_out_ep_dci, dma_buf, (uint32_t)bytes_per_ms, frame_id, false, (z == 7));
         buf_idx++;
     }
     xhci_ring_doorbell(ctrl, audio->slot_id, audio->as_out_ep_dci);
 
-    /* Wait for the hardware to finish playing buffered audio */
-    while (rtos_get_ticks() - t_start < buf_idx) {
+    /* Wait for hardware pipeline to finish playing buffered audio */
+    t_drain = rtos_get_ticks();
+    while (ctrl && xhci_get_ring_queued_count(ctrl, audio->slot_id, audio->as_out_ep_dci) > 0 && (rtos_get_ticks() - t_drain < 1500)) {
         xhci_poll();
-        rtos_sleep_ms(10);
+        rtos_sleep_ms(4);
     }
 
-    rtos_sleep_ms(10);
-    xhci_poll();
+    if (cur_task) {
+        cur_task->priority = old_prio;
+        cur_task->base_priority = old_prio;
+    }
+
+    if (underrun_count > 0 || min_queued < 64) {
+        kprint_color(0x0E, "[Audio Diagnostics] Underruns: %u | Min Queue Depth: %u ms | Max Queue Depth: %u ms\n",
+                     underrun_count, (min_queued == 0xFFFFFFFF) ? 0 : min_queued, max_queued);
+    }
+
     return 0;
 }
 
@@ -955,4 +1077,266 @@ void usb_audio_stop_all(void) {
         }
     }
     g_audio_bg_ctx.in_use = false;
+}
+
+#define ISOCH_IN_DMA_BUFFERS 1024
+static uint8_t g_isoch_in_pool[ISOCH_IN_DMA_BUFFERS][ISOCH_FRAME_MAX];
+
+int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_bytes, uint32_t duration_ms, size_t *out_bytes) {
+    xhci_controller_t *ctrl;
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
+    size_t bytes_per_ms;
+    uint32_t target_frames;
+    uint32_t queued_frames = 0;
+    uint32_t collected_frames = 0;
+    uint32_t t_start;
+    uint8_t *dst = (uint8_t*)pcm_data;
+
+    if (!audio || !audio->initialized || !pcm_data || max_bytes == 0 || !out_bytes) return -1;
+    *out_bytes = 0;
+
+    ctrl = xhci_get_controller();
+    if (!ctrl) return -1;
+    slot = &ctrl->slots[audio->slot_id];
+    ring = &slot->ep_rings[audio->as_in_ep_dci];
+
+    if (duration_ms == 0) duration_ms = 1000;
+    if (duration_ms > 60000) duration_ms = 60000;
+
+    /* 48000 Hz, Mono, 16-bit -> 96 bytes/ms */
+    bytes_per_ms = (size_t)audio->in_sample_rate * audio->in_channels * (audio->in_bits_per_sample / 8) / 1000;
+    if (bytes_per_ms == 0 || bytes_per_ms > ISOCH_FRAME_MAX) bytes_per_ms = 96;
+
+    target_frames = duration_ms;
+    if (target_frames * bytes_per_ms > max_bytes) {
+        target_frames = max_bytes / bytes_per_ms;
+    }
+    if (target_frames == 0) return 0;
+
+    if (!ring || ring->size == 0) {
+        /* Running on output-only device or VM without capture endpoint */
+        size_t total_needed = target_frames * bytes_per_ms;
+        if (total_needed > max_bytes) total_needed = max_bytes;
+        memset(dst, 0, total_needed);
+        *out_bytes = total_needed;
+        rtos_sleep_ms(duration_ms > 200 ? 200 : duration_ms);
+        return 0;
+    }
+
+    /* 1. Activate Hardware Capture Stream: SET_INTERFACE on Interface 2, Alternate Setting 1 */
+    usb_control_msg(audio->dev,
+                    USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    USB_REQ_SET_INTERFACE,
+                    audio->as_in_alt,
+                    audio->as_in_iface,
+                    NULL, 0);
+
+    /* 2. Set Selector Unit 8 to Pin 1 (Microphone) */
+    uint8_t sel_pin = 1;
+    usb_control_msg(audio->dev,
+                    USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    UAC_REQ_SET_CUR,
+                    0,
+                    (8 << 8) | audio->ac_iface,
+                    &sel_pin, 1);
+
+    /* 3. Set Sampling Rate, Maximum Preamp Volume (+23 dB), and Unmute */
+    usb_audio_set_mic_sample_rate(audio, audio->in_sample_rate);
+    usb_audio_set_mic_volume(audio, 100);
+    usb_audio_set_mic_mute(audio, false);
+
+    t_start = rtos_get_ticks();
+
+    /* Pre-buffer initial Isoch IN TRBs */
+    while (queued_frames < 64 && queued_frames < target_frames) {
+        uint8_t *dma_buf = g_isoch_in_pool[queued_frames % ISOCH_IN_DMA_BUFFERS];
+        memset(dma_buf, 0, bytes_per_ms);
+        bool ioc = ((queued_frames % 16) == 0) || (queued_frames + 1 >= target_frames);
+
+        xhci_isoch_transfer_frame(ctrl, audio->slot_id, audio->as_in_ep_dci, dma_buf, (uint32_t)bytes_per_ms, 0, true, ioc);
+        queued_frames++;
+    }
+    xhci_ring_doorbell(ctrl, audio->slot_id, audio->as_in_ep_dci);
+
+    /* Capture loop: keep queuing ahead while collecting completed frames */
+    while (collected_frames < target_frames) {
+        uint32_t elapsed = rtos_get_ticks() - t_start;
+        if (elapsed > duration_ms + 2000) break; /* Timeout safeguard */
+
+        xhci_poll();
+
+        /* Keep ring queued ahead by 64 frames */
+        while (queued_frames < target_frames && (queued_frames - collected_frames) < 64) {
+            uint8_t *dma_buf = g_isoch_in_pool[queued_frames % ISOCH_IN_DMA_BUFFERS];
+            memset(dma_buf, 0, bytes_per_ms);
+            bool ioc = ((queued_frames % 16) == 0) || (queued_frames + 1 >= target_frames);
+
+            xhci_isoch_transfer_frame(ctrl, audio->slot_id, audio->as_in_ep_dci, dma_buf, (uint32_t)bytes_per_ms, 0, true, ioc);
+            queued_frames++;
+            xhci_ring_doorbell(ctrl, audio->slot_id, audio->as_in_ep_dci);
+        }
+
+        /* Collect completed frames */
+        while (collected_frames < queued_frames && collected_frames < target_frames) {
+            uint32_t elapsed_frames = rtos_get_ticks() - t_start;
+            if (collected_frames >= elapsed_frames) break; /* Frame still in flight */
+
+            uint8_t *dma_buf = g_isoch_in_pool[collected_frames % ISOCH_IN_DMA_BUFFERS];
+            if (*out_bytes + bytes_per_ms <= max_bytes) {
+                memcpy(dst + *out_bytes, dma_buf, bytes_per_ms);
+                *out_bytes += bytes_per_ms;
+            }
+            collected_frames++;
+        }
+
+        rtos_sleep_ms(2);
+    }
+
+    /* Collect any remaining tail frames */
+    while (collected_frames < queued_frames && collected_frames < target_frames) {
+        uint8_t *dma_buf = g_isoch_in_pool[collected_frames % ISOCH_IN_DMA_BUFFERS];
+        if (*out_bytes + bytes_per_ms <= max_bytes) {
+            memcpy(dst + *out_bytes, dma_buf, bytes_per_ms);
+            *out_bytes += bytes_per_ms;
+        }
+        collected_frames++;
+    }
+
+    /* 4. Deactivate Capture Stream: SET_INTERFACE on Interface 2, Alternate Setting 0 */
+    usb_control_msg(audio->dev,
+                    USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                    USB_REQ_SET_INTERFACE,
+                    0,
+                    audio->as_in_iface,
+                    NULL, 0);
+
+    return 0;
+}
+
+int usb_audio_record_wav_file(const char *dev_name, const char *path, uint32_t duration_sec) {
+    usb_audio_device_t *audio;
+    block_dev_t *bdev;
+    fat_fs_t fs;
+    char full_path[256];
+    size_t pcm_max;
+    uint8_t *pcm_buf;
+    size_t recorded_bytes = 0;
+    int res;
+
+    audio = usb_audio_get_default();
+    if (!audio) {
+        kprint_color(0x4F, "No USB Audio device found for recording.\n");
+        return -1;
+    }
+
+    if (!dev_name || dev_name[0] == '\0') dev_name = "usb0";
+    if (!path || path[0] == '\0') return -1;
+
+    if (path[0] != '/') {
+        snprintf(full_path, sizeof(full_path), "/%s", path);
+    } else {
+        strncpy(full_path, path, sizeof(full_path) - 1);
+        full_path[sizeof(full_path) - 1] = '\0';
+    }
+
+    bdev = blockdev_get(dev_name);
+    if (!bdev || fat_mount(bdev, &fs) != 0) {
+        kprint_color(0x4F, "Failed to mount FAT filesystem on '%s'.\n", dev_name);
+        return -1;
+    }
+
+    if (duration_sec == 0) duration_sec = 5;
+    if (duration_sec > 60) duration_sec = 60;
+
+    /* 48000 Hz, 1 channel, 16-bit = 96000 bytes/sec */
+    pcm_max = (size_t)audio->in_sample_rate * audio->in_channels * (audio->in_bits_per_sample / 8) * duration_sec;
+    pcm_buf = (uint8_t*)kmalloc(pcm_max + 64);
+    if (!pcm_buf) {
+        kprint_color(0x4F, "Out of memory allocating %u bytes for recording buffer.\n", (uint32_t)pcm_max);
+        return -1;
+    }
+
+    kprintf("[Audio] Recording %u sec from %s (48kHz Mono 16-bit PCM)...\n", duration_sec, dev_name);
+    res = usb_audio_record_pcm(audio, pcm_buf, pcm_max, duration_sec * 1000, &recorded_bytes);
+    if (res != 0 || recorded_bytes == 0) {
+        kfree(pcm_buf);
+        kprint_color(0x4F, "[Audio] Recording failed (res=%d, bytes=%u).\n", res, (uint32_t)recorded_bytes);
+        return -1;
+    }
+
+    /* Compute Peak Amplitude */
+    int32_t peak = 0;
+    size_t num_s = recorded_bytes / sizeof(int16_t);
+    const int16_t *s16 = (const int16_t*)pcm_buf;
+    size_t s;
+    for (s = 0; s < num_s; s++) {
+        int32_t v = s16[s];
+        if (v < 0) v = -v;
+        if (v > peak) peak = v;
+    }
+    kprintf("[Audio] Microphone captured %u ms. Peak amplitude: %d / 32768\n",
+            (uint32_t)((recorded_bytes * 1000) / ((size_t)audio->in_sample_rate * audio->in_channels * (audio->in_bits_per_sample / 8))),
+            (int)peak);
+
+    /* Construct 44-byte WAV header */
+    uint32_t sample_rate = audio->in_sample_rate;
+    uint16_t channels = audio->in_channels;
+    uint16_t bits_per_sample = audio->in_bits_per_sample;
+    uint32_t byte_rate = sample_rate * channels * (bits_per_sample / 8);
+    uint16_t block_align = channels * (bits_per_sample / 8);
+    uint32_t data_sz = (uint32_t)recorded_bytes;
+    uint32_t riff_sz = data_sz + 36;
+    size_t total_wav_sz = 44 + recorded_bytes;
+    uint8_t *wav_file = (uint8_t*)kmalloc(total_wav_sz);
+
+    if (!wav_file) {
+        kfree(pcm_buf);
+        kprint_color(0x4F, "Out of memory assembling WAV file (%u bytes).\n", (uint32_t)total_wav_sz);
+        return -1;
+    }
+
+    memcpy(wav_file + 0, "RIFF", 4);
+    wav_file[4] = (uint8_t)(riff_sz & 0xFF);
+    wav_file[5] = (uint8_t)((riff_sz >> 8) & 0xFF);
+    wav_file[6] = (uint8_t)((riff_sz >> 16) & 0xFF);
+    wav_file[7] = (uint8_t)((riff_sz >> 24) & 0xFF);
+    memcpy(wav_file + 8, "WAVEfmt ", 8);
+    wav_file[16] = 16; wav_file[17] = 0; wav_file[18] = 0; wav_file[19] = 0; /* Subchunk1Size = 16 */
+    wav_file[20] = 1; wav_file[21] = 0; /* AudioFormat = 1 (PCM) */
+    wav_file[22] = (uint8_t)(channels & 0xFF); wav_file[23] = (uint8_t)((channels >> 8) & 0xFF);
+    wav_file[24] = (uint8_t)(sample_rate & 0xFF);
+    wav_file[25] = (uint8_t)((sample_rate >> 8) & 0xFF);
+    wav_file[26] = (uint8_t)((sample_rate >> 16) & 0xFF);
+    wav_file[27] = (uint8_t)((sample_rate >> 24) & 0xFF);
+    wav_file[28] = (uint8_t)(byte_rate & 0xFF);
+    wav_file[29] = (uint8_t)((byte_rate >> 8) & 0xFF);
+    wav_file[30] = (uint8_t)((byte_rate >> 16) & 0xFF);
+    wav_file[31] = (uint8_t)((byte_rate >> 24) & 0xFF);
+    wav_file[32] = (uint8_t)(block_align & 0xFF);
+    wav_file[33] = (uint8_t)((block_align >> 8) & 0xFF);
+    wav_file[34] = (uint8_t)(bits_per_sample & 0xFF);
+    wav_file[35] = (uint8_t)((bits_per_sample >> 8) & 0xFF);
+    memcpy(wav_file + 36, "data", 4);
+    wav_file[40] = (uint8_t)(data_sz & 0xFF);
+    wav_file[41] = (uint8_t)((data_sz >> 8) & 0xFF);
+    wav_file[42] = (uint8_t)((data_sz >> 16) & 0xFF);
+    wav_file[43] = (uint8_t)((data_sz >> 24) & 0xFF);
+    memcpy(wav_file + 44, pcm_buf, recorded_bytes);
+
+    /* Write to FAT filesystem */
+    res = fat_write_file(&fs, full_path, wav_file, total_wav_sz);
+    if (res != 0 && full_path[0] == '/') {
+        res = fat_write_file(&fs, full_path + 1, wav_file, total_wav_sz);
+    }
+
+    if (res == 0) {
+        kprintf("[Audio] Saved recording to '%s' on %s (%u bytes).\n", full_path, dev_name, (uint32_t)total_wav_sz);
+    } else {
+        kprint_color(0x4F, "[Audio] Failed to write '%s' (err %d).\n", full_path, res);
+    }
+
+    kfree(pcm_buf);
+    kfree(wav_file);
+    return res;
 }

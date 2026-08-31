@@ -125,6 +125,7 @@ int xhci_interrupt_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep
 int xhci_isoch_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, bool sia, bool ioc);
 int xhci_isoch_transfer_frame(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci, void *data, uint32_t len, uint32_t frame_id, bool sia, bool ioc);
 uint32_t xhci_get_current_frame(xhci_controller_t *ctrl);
+uint32_t xhci_get_ring_queued_count(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci);
 
 /* Root Hub management */
 void xhci_scan_ports(xhci_controller_t *ctrl);

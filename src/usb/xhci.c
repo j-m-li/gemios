@@ -667,6 +667,20 @@ int xhci_isoch_transfer(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci
     return xhci_isoch_transfer_frame(ctrl, slot_id, ep_dci, data, len, 0, sia, ioc);
 }
 
+uint32_t xhci_get_ring_queued_count(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t ep_dci) {
+    xhci_slot_t *slot;
+    xhci_ring_t *ring;
+    if (!ctrl || slot_id == 0 || slot_id > XHCI_MAX_SLOTS || ep_dci >= 32) return 0;
+    slot = &ctrl->slots[slot_id];
+    ring = &slot->ep_rings[ep_dci];
+    if (ring->size == 0) return 0;
+    if (ring->enqueue_idx >= ring->dequeue_idx) {
+        return ring->enqueue_idx - ring->dequeue_idx;
+    } else {
+        return (ring->size - 1 - ring->dequeue_idx) + ring->enqueue_idx;
+    }
+}
+
 bool xhci_reset_root_port(xhci_controller_t *ctrl, uint8_t port) {
     uintptr_t portsc_reg = ctrl->op_base + XHCI_OP_PORTSC_BASE + ((port - 1) * 0x10);
     uint32_t portsc = mmio_read32(portsc_reg);
