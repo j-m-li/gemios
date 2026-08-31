@@ -1328,8 +1328,8 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
         rtos_sleep_ms(1);
     }
 
-    /* Drain any remaining tail frames confirmed by hardware */
-    for (d = 0; d < 20 && collected_frames < target_frames; d++) {
+    /* Drain all in-flight frames queued in hardware pipeline */
+    for (d = 0; d < 300 && collected_frames < queued_frames && collected_frames < target_frames; d++) {
         xhci_poll();
         while (read_ring_idx != ring->dequeue_idx && collected_frames < target_frames) {
             uint8_t *dma_buf = g_isoch_in_pool[read_ring_idx];
@@ -1341,7 +1341,7 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
             read_ring_idx++;
             if (read_ring_idx >= ring->size - 1) read_ring_idx = 0;
         }
-        if (read_ring_idx == ring->dequeue_idx) break;
+        if (collected_frames >= queued_frames || collected_frames >= target_frames) break;
         rtos_sleep_ms(2);
     }
 
