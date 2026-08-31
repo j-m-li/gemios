@@ -113,6 +113,8 @@ typedef struct {
     uint8_t as_in_ep_dci;      /* xHCI DCI (e.g. 5) */
     uint16_t as_in_max_packet; /* Max packet size (e.g. 100) */
     uint8_t mic_feature_unit_id; /* Feature Unit ID for Mic volume/mute (e.g. 10 for 0d8c:0014) */
+    uint8_t mic_selector_unit_id;/* Selector Unit ID for Mic input routing (e.g. 8 for 0d8c:0014) */
+    uint8_t mic_selector_pin;    /* Selector pin for Mic (e.g. 1 for 0d8c:0014) */
     uint32_t in_sample_rate;   /* 48000 Hz default */
     uint8_t in_channels;       /* 1 (Mono) */
     uint8_t in_bits_per_sample;/* 16-bit */

@@ -935,24 +935,29 @@ static void cmd_audio(int argc, char **argv) {
             kprintf("    Slot ID:         %u\n", a->slot_id);
             kprintf("    Playback Stream: Interface %u (Alt %u), Endpoint 0x%02x (DCI %u)\n",
                     a->as_out_iface, a->as_out_alt, a->as_out_ep_addr, a->as_out_ep_dci);
-            kprintf("    Sample Rate:     %u Hz\n", a->sample_rate);
-            kprintf("    Channels:        %u (%s), %u-bit PCM\n",
-                    a->channels, (a->channels == 2) ? "Stereo" : "Mono", a->bits_per_sample);
-            kprintf("    Volume:          %u%%\n", a->volume_percent);
-            kprintf("    Mute Status:     %s\n", a->is_muted ? "MUTED" : "UNMUTED");
+            kprintf("    Playback Rate:   %u Hz, %u (%s), %u-bit PCM\n",
+                    a->sample_rate, a->channels, (a->channels == 2) ? "Stereo" : "Mono", a->bits_per_sample);
+            kprintf("    Master Volume:   %u%% (%s)\n", a->volume_percent, a->is_muted ? "MUTED" : "UNMUTED");
+            if (a->as_in_ep_dci != 0) {
+                kprintf("    Capture Stream:  Interface %u (Alt %u), Endpoint 0x%02x (DCI %u)\n",
+                        a->as_in_iface, a->as_in_alt, a->as_in_ep_addr, a->as_in_ep_dci);
+                kprintf("    Capture Rate:    %u Hz, %u (%s), %u-bit PCM\n",
+                        a->in_sample_rate, a->in_channels, (a->in_channels == 2) ? "Stereo" : "Mono", a->in_bits_per_sample);
+                kprintf("    Microphone Vol:  %u%% (%s)\n", a->mic_volume_percent, a->mic_is_muted ? "MUTED" : "UNMUTED");
+            }
             kprintf("    Buffering:       Triple Buffering (3x 40ms Periods, %u B/period)\n", (uint32_t)AUDIO_PERIOD_MAX_BYTES);
             kprintf("    Queue Status:    %u / 3 periods queued (Active: %s, Underruns: %u)\n",
                     a->tb.queued_periods, usb_audio_is_playing(a) ? "YES" : "NO", a->tb.underruns);
         }
         kprintf("========================================================\n");
-        kprintf("Commands: audio vol <0-100> | audio mute <on|off> | audio stop | play [--bg] <file.wav>\n");
+        kprintf("Commands: audio vol <0-100> | audio mic vol <0-100> | audio mic mute <on|off> | record <file.wav> [sec] | play <file.wav>\n");
         return;
     }
 
     if (strcmp(argv[1], "vol") == 0 || strcmp(argv[1], "volume") == 0) {
         uint32_t v;
         if (argc < 3) {
-            kprintf("Current volume: %u%%\nUsage: audio vol <0-100>\n", audio->volume_percent);
+            kprintf("Current master volume: %u%%\nUsage: audio vol <0-100>\n", audio->volume_percent);
             return;
         }
         v = parse_int(argv[2]);
@@ -967,16 +972,28 @@ static void cmd_audio(int argc, char **argv) {
         usb_audio_set_mute(audio, m);
         kprint_color(0x0A, "USB Audio %s\n", m ? "MUTED" : "UNMUTED");
     } else if (strcmp(argv[1], "mic") == 0) {
-        if (argc >= 4 && (strcmp(argv[2], "vol") == 0 || strcmp(argv[2], "volume") == 0)) {
-            uint32_t mv = parse_int(argv[3]);
+        if (argc >= 3 && (strcmp(argv[2], "vol") == 0 || strcmp(argv[2], "volume") == 0)) {
+            uint32_t mv;
+            if (argc < 4) {
+                kprintf("Current microphone volume: %u%%\nUsage: audio mic vol <0-100>\n", audio->mic_volume_percent);
+                return;
+            }
+            mv = parse_int(argv[3]);
             if (mv > 100) mv = 100;
             usb_audio_set_mic_volume(audio, (uint8_t)mv);
             kprint_color(0x0A, "Set Microphone volume to %u%%\n", mv);
-        } else if (argc >= 4 && strcmp(argv[2], "mute") == 0) {
-            bool mm = (strcmp(argv[3], "off") != 0 && strcmp(argv[3], "0") != 0);
+        } else if (argc >= 3 && strcmp(argv[2], "mute") == 0) {
+            bool mm;
+            if (argc < 4) {
+                kprintf("Current microphone mute status: %s\nUsage: audio mic mute <on|off>\n", audio->mic_is_muted ? "MUTED" : "UNMUTED");
+                return;
+            }
+            mm = (strcmp(argv[3], "off") != 0 && strcmp(argv[3], "0") != 0);
             usb_audio_set_mic_mute(audio, mm);
             kprint_color(0x0A, "Microphone %s\n", mm ? "MUTED" : "UNMUTED");
         } else {
+            kprintf("Microphone Status: Volume: %u%% | Mute: %s\n",
+                    audio->mic_volume_percent, audio->mic_is_muted ? "MUTED" : "UNMUTED");
             kprintf("Usage: audio mic vol <0-100> | audio mic mute <on|off>\n");
         }
     } else if (strcmp(argv[1], "stop") == 0) {
