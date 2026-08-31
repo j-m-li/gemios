@@ -2,7 +2,7 @@
  * This is free and unencumbered software released into the public domain.
  * GEMIOS Preemptive Real-Time Operating System
  *
- * USB Audio Class 1.0 (UAC 1.0) Driver - C-Media 0d8c:0014 Audio Adapter
+ * USB Audio Class 1.0 (UAC 1.0) Driver
  */
 
 #include "usb_audio.h"
@@ -68,12 +68,14 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
     uint8_t *end;
     uint8_t cur_iface_num = 0;
     uint8_t cur_alt_num = 0;
-    uint8_t feature_unit_id = 9; /* Default for C-Media 0d8c:0014 */
-    uint8_t out_ep_addr = 0;
-    uint8_t out_ep_dci = 0;
-    uint16_t out_ep_max_packet = 192;
-    uint8_t as_out_iface_num = 1;
-    uint8_t as_out_alt_setting = 1;
+    uint8_t cur_iface_class = 0;
+    uint8_t cur_iface_subclass = 0;
+    uint8_t out_fu = 0;
+    uint8_t in_fu = 0;
+    uint8_t unit_src[32];
+    uint16_t in_term_type[32];
+    uint8_t sel_pins[32][8];
+    uint8_t sel_pin_count[32];
     int res;
 
     if (!dev || !iface) return -1;
@@ -90,18 +92,16 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
     if (g_num_audio_devs >= USB_AUDIO_MAX_DEVICES) return -1;
     audio = &g_audio_devs[g_num_audio_devs];
     memset(audio, 0, sizeof(usb_audio_device_t));
+    memset(unit_src, 0, sizeof(unit_src));
+    memset(in_term_type, 0, sizeof(in_term_type));
+    memset(sel_pins, 0, sizeof(sel_pins));
+    memset(sel_pin_count, 0, sizeof(sel_pin_count));
 
     audio->dev = dev;
     audio->slot_id = dev->slot_id;
-    audio->is_cmedia = (dev->dev_desc.idVendor == USB_VID_CMEDIA && dev->dev_desc.idProduct == USB_PID_CMEDIA_AUDIO_ADAPTER);
+    strncpy(dev->name, "USB Audio Device (UAC 1.0)", sizeof(dev->name) - 1);
 
-    if (audio->is_cmedia) {
-        strncpy(dev->name, "C-Media USB Audio Adapter (0d8c:0014)", sizeof(dev->name) - 1);
-    } else {
-        strncpy(dev->name, "USB Audio Device (UAC 1.0)", sizeof(dev->name) - 1);
-    }
-
-    /* Parse raw config descriptor to locate AudioControl Feature Unit & AudioStreaming OUT Isoch endpoint */
+    /* Parse configuration descriptors to dynamically map all Audio Interfaces, Units, and Endpoints */
     if (dev->raw_config_desc && dev->raw_config_len > 0) {
         p = dev->raw_config_desc;
         end = p + dev->raw_config_len;
@@ -116,32 +116,75 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
                 usb_interface_descriptor_t *id = (usb_interface_descriptor_t*)p;
                 cur_iface_num = id->bInterfaceNumber;
                 cur_alt_num = id->bAlternateSetting;
+                cur_iface_class = id->bInterfaceClass;
+                cur_iface_subclass = id->bInterfaceSubClass;
+
+                if (cur_iface_class == 1 && cur_iface_subclass == 1) {
+                    audio->ac_iface = cur_iface_num;
+                }
             } else if (type == 0x24) { /* CS_INTERFACE (Audio Class-Specific Interface) */
                 uint8_t subtype = p[2];
-                if (subtype == UAC_AC_FEATURE_UNIT) {
-                    uint8_t uid = p[3];
-                    /* Prefer Unit 9 for playback, Unit 10 for mic */
-                    if (feature_unit_id == 0 || uid == 9) {
-                        feature_unit_id = uid;
+                if (cur_iface_class == 1 && cur_iface_subclass == 1) {
+                    /* AudioControl Interface Descriptors */
+                    if (subtype == 0x02 && len >= 6) { /* INPUT_TERMINAL */
+                        uint8_t term_id = p[3];
+                        uint16_t term_type = (uint16_t)p[4] | ((uint16_t)p[5] << 8);
+                        if (term_id < 32) in_term_type[term_id] = term_type;
+                    } else if (subtype == 0x03 && len >= 8) { /* OUTPUT_TERMINAL */
+                        uint16_t term_type = (uint16_t)p[4] | ((uint16_t)p[5] << 8);
+                        uint8_t src_id = p[7];
+                        if (term_type == 0x0301 || term_type == 0x0302 || term_type == 0x0300) {
+                            out_fu = src_id;
+                        } else if (term_type == 0x0101) {
+                            in_fu = src_id;
+                        }
+                    } else if (subtype == 0x06 && len >= 5) { /* FEATURE_UNIT */
+                        uint8_t uid = p[3];
+                        uint8_t src_id = p[4];
+                        if (uid < 32) unit_src[uid] = src_id;
+                        if (out_fu == 0) out_fu = uid;
+                    } else if (subtype == 0x05 && len >= 5) { /* SELECTOR_UNIT */
+                        uint8_t uid = p[3];
+                        uint8_t nr_pins = p[4];
+                        if (uid < 32) {
+                            size_t k;
+                            sel_pin_count[uid] = nr_pins;
+                            for (k = 0; k < nr_pins && k < 8 && (5 + k < len); k++) {
+                                sel_pins[uid][k] = p[5 + k];
+                            }
+                        }
+                    }
+                } else if (cur_iface_class == 1 && cur_iface_subclass == 2) {
+                    /* AudioStreaming Format Type Descriptor */
+                    if (subtype == 0x02 && len >= 7) { /* FORMAT_TYPE */
+                        uint8_t nr_channels = p[4];
+                        uint8_t bit_res = p[6];
+                        if (cur_iface_num == audio->as_in_iface) {
+                            if (nr_channels > 0) audio->in_channels = nr_channels;
+                            if (bit_res > 0) audio->in_bits_per_sample = bit_res;
+                        } else {
+                            if (nr_channels > 0) audio->channels = nr_channels;
+                            if (bit_res > 0) audio->bits_per_sample = bit_res;
+                        }
                     }
                 }
             } else if (type == USB_DESC_ENDPOINT) {
                 usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t*)p;
                 if ((ep->bmAttributes & 0x03) == 1) { /* Isochronous */
                     if ((ep->bEndpointAddress & USB_DIR_IN) == 0) {
-                        /* Isochronous OUT endpoint found - bind interface & alt setting */
-                        out_ep_addr = ep->bEndpointAddress;
-                        out_ep_max_packet = ep->wMaxPacketSize;
-                        out_ep_dci = (out_ep_addr & 0x0F) * 2;
-                        as_out_iface_num = cur_iface_num;
-                        as_out_alt_setting = (cur_alt_num > 0) ? cur_alt_num : 1;
+                        /* Isochronous OUT endpoint found - bind playback interface & alt setting */
+                        audio->as_out_iface = cur_iface_num;
+                        audio->as_out_alt = (cur_alt_num > 0) ? cur_alt_num : 1;
+                        audio->as_out_ep_addr = ep->bEndpointAddress;
+                        audio->as_out_ep_dci = (audio->as_out_ep_addr & 0x0F) * 2;
+                        audio->as_out_max_packet = ep->wMaxPacketSize;
                     } else {
                         /* Isochronous IN endpoint found (Capture / Microphone) */
-                        audio->as_in_ep_addr = ep->bEndpointAddress;
-                        audio->as_in_max_packet = ep->wMaxPacketSize;
-                        audio->as_in_ep_dci = (audio->as_in_ep_addr & 0x0F) * 2 + 1;
                         audio->as_in_iface = cur_iface_num;
                         audio->as_in_alt = (cur_alt_num > 0) ? cur_alt_num : 1;
+                        audio->as_in_ep_addr = ep->bEndpointAddress;
+                        audio->as_in_ep_dci = (audio->as_in_ep_addr & 0x0F) * 2 + 1;
+                        audio->as_in_max_packet = ep->wMaxPacketSize;
                         audio->has_capture = true;
                     }
                 }
@@ -151,67 +194,67 @@ int usb_audio_init_device(usb_device_t *dev, usb_interface_t *iface) {
         }
     }
 
-    if (out_ep_addr == 0) {
-        /* Default for C-Media 0d8c:0014: EP 1 OUT, DCI 2, MaxPacket 200 */
-        out_ep_addr = 0x01;
-        out_ep_dci = 2;
-        out_ep_max_packet = 200;
-        as_out_iface_num = 1;
-        as_out_alt_setting = 1;
-    }
-    if (audio->as_in_ep_addr == 0) {
-        audio->as_in_ep_addr = 0x82;
-        audio->as_in_ep_dci = 5;
-        audio->as_in_max_packet = 100;
-        audio->as_in_iface = 2;
-        audio->as_in_alt = 1;
-        audio->has_capture = true;
-    }
-    if (feature_unit_id == 0) {
-        feature_unit_id = 9;
+    /* Assign Feature Unit for playback */
+    audio->feature_unit_id = out_fu;
+
+    /* Assign Feature Unit and Selector Unit for capture */
+    audio->mic_feature_unit_id = in_fu;
+    if (in_fu < 32 && unit_src[in_fu] > 0) {
+        uint8_t maybe_su = unit_src[in_fu];
+        if (maybe_su < 32 && sel_pin_count[maybe_su] > 0) {
+            size_t k;
+            audio->mic_selector_unit_id = maybe_su;
+            for (k = 0; k < sel_pin_count[maybe_su]; k++) {
+                uint8_t in_term = sel_pins[maybe_su][k];
+                if (in_term < 32 && in_term_type[in_term] == 0x0201) { /* Microphone */
+                    audio->mic_selector_pin = (uint8_t)(k + 1);
+                    break;
+                }
+            }
+        }
     }
 
-    audio->ac_iface = 0;
-    audio->as_out_iface = as_out_iface_num;
-    audio->as_out_alt = as_out_alt_setting;
-    audio->as_out_ep_addr = out_ep_addr;
-    audio->as_out_ep_dci = out_ep_dci;
-    audio->as_out_max_packet = out_ep_max_packet;
-    audio->feature_unit_id = feature_unit_id;
-    audio->sample_rate = 48000;
-    audio->channels = 2;
-    audio->bits_per_sample = 16;
+    /* Set standard defaults for unpopulated fields */
+    if (audio->sample_rate == 0) audio->sample_rate = 48000;
+    if (audio->channels == 0) audio->channels = 2;
+    if (audio->bits_per_sample == 0) audio->bits_per_sample = 16;
+    if (audio->as_out_max_packet == 0) audio->as_out_max_packet = 192;
     audio->volume_percent = 90;
     audio->is_muted = false;
 
-    audio->mic_feature_unit_id = 10;
-    audio->in_sample_rate = 48000;
-    audio->in_channels = 1;
-    audio->in_bits_per_sample = 16;
+    if (audio->in_sample_rate == 0) audio->in_sample_rate = 48000;
+    if (audio->in_channels == 0) audio->in_channels = 1;
+    if (audio->in_bits_per_sample == 0) audio->in_bits_per_sample = 16;
+    if (audio->as_in_max_packet == 0) audio->as_in_max_packet = 100;
+    if (audio->mic_selector_pin == 0) audio->mic_selector_pin = 1;
     audio->mic_volume_percent = 100;
     audio->mic_is_muted = false;
 
     audio->initialized = true;
-
     g_num_audio_devs++;
 
-    /* Activate Playback Stream: SET_INTERFACE on Interface 1, Alternate Setting 1 */
-    res = usb_control_msg(dev,
-                          USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                          USB_REQ_SET_INTERFACE,
-                          audio->as_out_alt,
-                          audio->as_out_iface,
-                          NULL, 0);
+    /* Activate Playback Stream: SET_INTERFACE on playback interface, alternate setting */
+    if (audio->as_out_ep_addr != 0) {
+        res = usb_control_msg(dev,
+                              USB_REQ_TYPE_STANDARD | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                              USB_REQ_SET_INTERFACE,
+                              audio->as_out_alt,
+                              audio->as_out_iface,
+                              NULL, 0);
 
-    /* Set Sampling Frequency on Endpoint (48000 Hz default) */
-    usb_audio_set_sample_rate(audio, 48000);
+        /* Set Sampling Frequency on Endpoint */
+        usb_audio_set_sample_rate(audio, audio->sample_rate);
 
-    /* Set initial hardware volume & unmute on Unit 9 and detected FU */
-    usb_audio_set_volume(audio, 90);
-    usb_audio_set_mute(audio, false);
+        /* Set initial hardware volume & unmute */
+        usb_audio_set_volume(audio, 90);
+        usb_audio_set_mute(audio, false);
+    }
 
-    kprint_color(0x0A, "[Audio] Bound %s on Slot %u (Playback: 48kHz Stereo EP 0x%02x DCI %u | Mic: 48kHz Mono EP 0x%02x DCI %u)\n",
-                 dev->name, audio->slot_id, audio->as_out_ep_addr, audio->as_out_ep_dci,
+    kprint_color(0x0A, "[Audio] Bound %s on Slot %u (Playback: %u Hz %s EP 0x%02x DCI %u | Mic: %u Hz %s EP 0x%02x DCI %u)\n",
+                 dev->name, audio->slot_id,
+                 audio->sample_rate, (audio->channels == 2) ? "Stereo" : "Mono",
+                 audio->as_out_ep_addr, audio->as_out_ep_dci,
+                 audio->in_sample_rate, (audio->in_channels == 2) ? "Stereo" : "Mono",
                  audio->as_in_ep_addr, audio->as_in_ep_dci);
 
     return 0;
@@ -276,20 +319,21 @@ int usb_audio_set_mic_volume(usb_audio_device_t *audio, uint8_t vol_percent) {
         vol_db = (int16_t)(((int32_t)vol_percent * 5760) / 100);
     }
 
-    fu = audio->mic_feature_unit_id ? audio->mic_feature_unit_id : 10;
+    fu = audio->mic_feature_unit_id;
+    if (fu > 0) {
+        /* Set Preamp Volume on Master (0) and Channel 1 */
+        usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR, (UAC_FU_CONTROL_VOLUME << 8) | 0, (fu << 8) | audio->ac_iface, &vol_db, 2);
+        usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR, (UAC_FU_CONTROL_VOLUME << 8) | 1, (fu << 8) | audio->ac_iface, &vol_db, 2);
 
-    /* Set Preamp Volume on Master (0) and Channel 1 */
-    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_VOLUME << 8) | 0, (fu << 8) | audio->ac_iface, &vol_db, 2);
-    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_VOLUME << 8) | 1, (fu << 8) | audio->ac_iface, &vol_db, 2);
-
-    /* Enable Automatic Gain Control (AGC / +20dB Mic Boost) */
-    agc_on = (vol_percent >= 50) ? 1 : 0;
-    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_AGC << 8) | 0, (fu << 8) | audio->ac_iface, &agc_on, 1);
-    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_AGC << 8) | 1, (fu << 8) | audio->ac_iface, &agc_on, 1);
+        /* Enable Automatic Gain Control (AGC / Hardware Boost) */
+        agc_on = (vol_percent >= 50) ? 1 : 0;
+        usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR, (UAC_FU_CONTROL_AGC << 8) | 0, (fu << 8) | audio->ac_iface, &agc_on, 1);
+        usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR, (UAC_FU_CONTROL_AGC << 8) | 1, (fu << 8) | audio->ac_iface, &agc_on, 1);
+    }
 
     audio->mic_volume_percent = vol_percent;
     return 0;
@@ -300,12 +344,13 @@ int usb_audio_set_mic_mute(usb_audio_device_t *audio, bool mute) {
     uint8_t fu;
 
     if (!audio || !audio->dev || !audio->initialized) return -1;
-    fu = audio->mic_feature_unit_id ? audio->mic_feature_unit_id : 10;
-
-    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_MUTE << 8) | 0, (fu << 8) | audio->ac_iface, &m_val, 1);
-    usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR, (UAC_FU_CONTROL_MUTE << 8) | 1, (fu << 8) | audio->ac_iface, &m_val, 1);
+    fu = audio->mic_feature_unit_id;
+    if (fu > 0) {
+        usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR, (UAC_FU_CONTROL_MUTE << 8) | 0, (fu << 8) | audio->ac_iface, &m_val, 1);
+        usb_control_msg(audio->dev, USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR, (UAC_FU_CONTROL_MUTE << 8) | 1, (fu << 8) | audio->ac_iface, &m_val, 1);
+    }
 
     audio->mic_is_muted = mute;
     return 0;
@@ -1247,14 +1292,16 @@ int usb_audio_record_pcm(usb_audio_device_t *audio, void *pcm_data, size_t max_b
                     audio->as_in_iface,
                     NULL, 0);
 
-    /* 2. Set Selector Unit 8 to Pin 1 (Microphone) */
-    uint8_t sel_pin = 1;
-    usb_control_msg(audio->dev,
-                    USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
-                    UAC_REQ_SET_CUR,
-                    0,
-                    (8 << 8) | audio->ac_iface,
-                    &sel_pin, 1);
+    /* 2. Set Selector Unit (if device has input multiplexer) to Microphone pin */
+    if (audio->mic_selector_unit_id > 0) {
+        uint8_t sel_pin = audio->mic_selector_pin ? audio->mic_selector_pin : 1;
+        usb_control_msg(audio->dev,
+                        USB_REQ_TYPE_CLASS | USB_DIR_OUT | USB_REQ_RECIPIENT_INTERFACE,
+                        UAC_REQ_SET_CUR,
+                        0,
+                        (audio->mic_selector_unit_id << 8) | audio->ac_iface,
+                        &sel_pin, 1);
+    }
 
     /* 3. Set Sampling Rate, Maximum Preamp Volume (+23 dB), and Unmute */
     usb_audio_set_mic_sample_rate(audio, audio->in_sample_rate);

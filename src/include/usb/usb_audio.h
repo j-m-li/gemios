@@ -2,7 +2,7 @@
  * This is free and unencumbered software released into the public domain.
  * GEMIOS Preemptive Real-Time Operating System
  *
- * USB Audio Class 1.0 (UAC 1.0) Driver - C-Media 0d8c:0014 Support
+ * USB Audio Class 1.0 (UAC 1.0) Driver
  */
 
 #ifndef GEMIOS_USB_AUDIO_H
@@ -61,10 +61,6 @@
 #define UAC_EP_CONTROL_SAMPLING_FREQ       0x01
 #define UAC_EP_CONTROL_PITCH               0x02
 
-/* Known Vendor/Product IDs */
-#define USB_VID_CMEDIA                     0x0d8c
-#define USB_PID_CMEDIA_AUDIO_ADAPTER       0x0014
-
 #define USB_AUDIO_MAX_DEVICES              4
 
 #define AUDIO_NUM_PERIODS                  3       /* Triple Buffering (3 periods) */
@@ -93,28 +89,27 @@ typedef struct {
     uint8_t as_out_alt;        /* Alternate setting with endpoint (usually 1) */
     uint8_t as_out_ep_addr;    /* Endpoint address (e.g. 0x01) */
     uint8_t as_out_ep_dci;     /* xHCI DCI (e.g. 2) */
-    uint16_t as_out_max_packet;/* Max packet size (e.g. 200) */
-    uint8_t feature_unit_id;   /* Feature Unit ID for master volume/mute (e.g. 9 for 0d8c:0014) */
+    uint16_t as_out_max_packet;/* Max packet size (e.g. 192) */
+    uint8_t feature_unit_id;   /* Feature Unit ID for master volume/mute */
     uint32_t sample_rate;      /* 48000 Hz default, or 44100 Hz */
     uint8_t channels;          /* 2 (Stereo) */
     uint8_t bits_per_sample;   /* 16-bit */
     uint8_t volume_percent;    /* 0 - 100% */
     bool is_muted;
-    bool is_cmedia;
     bool stream_active;
     bool initialized;
     audio_triple_buffer_t tb;  /* Triple buffer subsystem */
 
     /* Capture (Microphone) properties */
     bool has_capture;
-    uint8_t as_in_iface;       /* Audio Streaming Capture Interface number (e.g. 2) */
-    uint8_t as_in_alt;         /* Alternate setting with endpoint (e.g. 1) */
+    uint8_t as_in_iface;       /* Audio Streaming Capture Interface number */
+    uint8_t as_in_alt;         /* Alternate setting with endpoint */
     uint8_t as_in_ep_addr;     /* Endpoint address (e.g. 0x82) */
     uint8_t as_in_ep_dci;      /* xHCI DCI (e.g. 5) */
-    uint16_t as_in_max_packet; /* Max packet size (e.g. 100) */
-    uint8_t mic_feature_unit_id; /* Feature Unit ID for Mic volume/mute (e.g. 10 for 0d8c:0014) */
-    uint8_t mic_selector_unit_id;/* Selector Unit ID for Mic input routing (e.g. 8 for 0d8c:0014) */
-    uint8_t mic_selector_pin;    /* Selector pin for Mic (e.g. 1 for 0d8c:0014) */
+    uint16_t as_in_max_packet; /* Max packet size */
+    uint8_t mic_feature_unit_id; /* Feature Unit ID for Mic volume/mute */
+    uint8_t mic_selector_unit_id;/* Selector Unit ID for Mic input routing */
+    uint8_t mic_selector_pin;    /* Selector pin for Mic */
     uint32_t in_sample_rate;   /* 48000 Hz default */
     uint8_t in_channels;       /* 1 (Mono) */
     uint8_t in_bits_per_sample;/* 16-bit */

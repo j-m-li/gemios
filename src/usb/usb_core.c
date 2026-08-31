@@ -594,8 +594,7 @@ int usb_enumerate_device(xhci_controller_t *ctrl, uint8_t slot_id, uint8_t speed
                 usb_hid_init_device(dev, iface);
             } else if (iface->interface_class == USB_CLASS_MASS_STORAGE) {
                 usb_msc_init_device(dev, iface);
-            } else if (iface->interface_class == USB_CLASS_AUDIO ||
-                       (dev->dev_desc.idVendor == USB_VID_CMEDIA && dev->dev_desc.idProduct == USB_PID_CMEDIA_AUDIO_ADAPTER)) {
+            } else if (iface->interface_class == USB_CLASS_AUDIO) {
                 usb_audio_init_device(dev, iface);
             }
         }

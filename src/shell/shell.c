@@ -89,7 +89,7 @@ static void cmd_help(int argc, char **argv) {
     kprintf("  cp [-r] [src] <dest>  - Copy files or directories on FAT filesystem\n");
     kprintf("  rm [-r] [dev] <path>  - Remove files or directories (e.g. rm -r *)\n");
     kprintf("  edit [dev] <path>     - Fullscreen MS-DOS style UTF-8 text editor\n");
-    kprintf("  audio [info|vol|mute] - Configure USB Audio (C-Media 0d8c:0014)\n");
+    kprintf("  audio [info|vol|mute] - Configure USB Audio (UAC 1.0)\n");
     kprintf("  play [dev] <file.wav> - Play WAV audio file through USB Audio\n");
     kprintf("  beep [freq] [ms]      - Play a sound tone through USB Audio\n");
     kprintf("  mouse                 - Show current mouse coordinates (PS/2 & USB)\n");
@@ -916,7 +916,7 @@ static void cmd_audio(int argc, char **argv) {
 
     count = usb_audio_get_device_count();
     if (count == 0) {
-        kprint_color(0x4F, "No USB Audio device detected. (Plug in a USB Audio adapter like 0d8c:0014)\n");
+        kprint_color(0x4F, "No USB Audio device detected.\n");
         return;
     }
 
